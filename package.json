@@ -1,0 +1,29 @@
+{
+  "name": "chic",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.tsx",
+  "module": "src/index.tsx",
+  "author": "geoffsee",
+  "scripts": {
+    "dev": "bun --hot src/index.tsx",
+    "build": "rm -rf dist && bun build ./src/index.html --outdir=dist --target=browser --splitting --minify  --define:process.env.NODE_ENV='\"production\"' --env='BUN_PUBLIC_*'",
+    "start": "NODE_ENV=production bun src/index.tsx",
+    "deploy": "bun run build && bunx wrangler deploy",
+    "test": "bun test tests"
+  },
+  "dependencies": {
+    "@chakra-ui/react": "^3.36.1",
+    "@emotion/react": "^11.14.0",
+    "next-themes": "^0.4.6",
+    "react": "^19",
+    "react-dom": "^19"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "playwright": "^1.58.0"
+  }
+}
