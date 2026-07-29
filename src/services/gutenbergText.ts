@@ -3,14 +3,11 @@
  * (and TTS) start at the actual work — not the license, TOC, or extracts.
  */
 
-const START_MARKER =
-  /\*{3}\s*START OF (?:THE )?PROJECT GUTENBERG EBOOK[^\n*]*\*{3}/i;
-const END_MARKER =
-  /\*{3}\s*END OF (?:THE )?PROJECT GUTENBERG EBOOK[^\n*]*(?:\*{3})?/i;
+const START_MARKER = /\*{3}\s*START OF (?:THE )?PROJECT GUTENBERG EBOOK[^\n*]*\*{3}/i;
+const END_MARKER = /\*{3}\s*END OF (?:THE )?PROJECT GUTENBERG EBOOK[^\n*]*(?:\*{3})?/i;
 
 /** First chapter of a work (TOC usually lists this earlier as well). */
-const CHAPTER_ONE_LINE =
-  /^[ \t]*(?:CHAPTER|Chapter)\s+(?:1|I)(?:\.|\b)[^\n]*$/gm;
+const CHAPTER_ONE_LINE = /^[ \t]*(?:CHAPTER|Chapter)\s+(?:1|I)(?:\.|\b)[^\n]*$/gm;
 
 /**
  * Prepare raw Gutenberg plain text for reading aloud / display.
@@ -46,9 +43,7 @@ export function prepareGutenbergText(raw: string): string {
  */
 function stripLooseHeader(text: string): string {
   // Common PG plain-text preamble mentions the license before the work.
-  const license = text.search(
-    /This eBook is for the use of anyone anywhere/i,
-  );
+  const license = text.search(/This eBook is for the use of anyone anywhere/i);
   if (license < 0 || license > 2000) {
     return text;
   }
@@ -92,7 +87,10 @@ function skipToMainContent(text: string): string {
 
 function findAllLineStarts(text: string, pattern: RegExp): number[] {
   const indexes: number[] = [];
-  const re = new RegExp(pattern.source, pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`);
+  const re = new RegExp(
+    pattern.source,
+    pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`,
+  );
   let match: RegExpExecArray | null;
   while ((match = re.exec(text)) !== null) {
     indexes.push(match.index);

@@ -20,6 +20,7 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
+import { useIncrementalBookText } from "./hooks/useIncrementalBookText";
 import { ApiBookSource, BookSummary } from "./services/bookService";
 import {
   loadReadingProgress,
@@ -98,7 +99,9 @@ const findWordIndexFromChar = (wordSegments: TextSegment[], charIndex: number) =
   const maxIndex = Math.max(0, lastSegment.end - 1);
   const clamped = Math.max(0, Math.min(charIndex, maxIndex));
 
-  const match = wordSegments.findIndex((segment) => clamped >= segment.start && clamped < segment.end);
+  const match = wordSegments.findIndex(
+    (segment) => clamped >= segment.start && clamped < segment.end,
+  );
   if (match !== -1) {
     return match;
   }
@@ -148,21 +151,25 @@ const buildSentenceContext = (text: string, charIndex: number, radius = 220) => 
     return snippet;
   }
 
-  return text
-    .slice(Math.max(0, clamped - radius), Math.min(text.length, clamped + radius))
-    .trim();
+  return text.slice(Math.max(0, clamped - radius), Math.min(text.length, clamped + radius)).trim();
 };
 
 export function App() {
   const bookSource = useMemo(() => new ApiBookSource(), []);
   const [books, setBooks] = useState<BookSummary[]>([]);
   const [selectedBook, setSelectedBook] = useState<BookSummary | null>(null);
-  const [bookText, setBookText] = useState("");
   const [loadingBooks, setLoadingBooks] = useState(true);
   const [loadingMoreBooks, setLoadingMoreBooks] = useState(false);
-  const [loadingText, setLoadingText] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
-  const [textError, setTextError] = useState<string | null>(null);
+  const {
+    bookText,
+    loadingText,
+    loadingMoreText,
+    textError,
+    hasMoreText,
+    loadMoreText,
+    handleReaderScroll,
+  } = useIncrementalBookText({ bookSource, selectedBook });
   const [searchInput, setSearchInput] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   /** Single query object so search resets and page advances never race. */
@@ -252,9 +259,7 @@ export function App() {
 
         if (isFirstPage) {
           if (fetchedBooks.length === 0) {
-            setListError(
-              search ? `No books match “${search}”.` : "No books available right now.",
-            );
+            setListError(search ? `No books match “${search}”.` : "No books available right now.");
             setBooks([]);
             return;
           }
@@ -296,39 +301,6 @@ export function App() {
       cancelled = true;
     };
   }, [bookSource, catalogQuery]);
-
-  useEffect(() => {
-    if (!selectedBook) {
-      setBookText("");
-      setTextError(null);
-      setLoadingText(false);
-      return;
-    }
-
-    let cancelled = false;
-    setLoadingText(true);
-    setTextError(null);
-
-    bookSource
-      .fetchBookText(selectedBook)
-      .then((text) => {
-        if (cancelled) return;
-        setBookText(text);
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        setTextError(error?.message ?? "Unable to load the book text.");
-        setBookText("");
-      })
-      .finally(() => {
-        if (cancelled) return;
-        setLoadingText(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [bookSource, selectedBook]);
 
   useEffect(() => {
     // Re-read on mount in case another tab wrote progress.
@@ -405,9 +377,7 @@ export function App() {
       });
       setSessionPositions(store.positions);
       setProgressWarning(
-        persisted
-          ? null
-          : "Progress is only kept for this visit — browser storage is unavailable.",
+        persisted ? null : "Progress is only kept for this visit — browser storage is unavailable.",
       );
     },
     [selectedBook, wordSegments],
@@ -478,11 +448,12 @@ export function App() {
 
     const saved = sessionPositions[selectedBook.id];
     const fromChar = typeof saved?.charIndex === "number" ? saved.charIndex : undefined;
-    const preferredIndex = typeof saved?.wordIndex === "number"
-      ? saved.wordIndex
-      : typeof fromChar === "number"
-        ? findWordIndexFromChar(wordSegments, fromChar)
-        : 0;
+    const preferredIndex =
+      typeof saved?.wordIndex === "number"
+        ? saved.wordIndex
+        : typeof fromChar === "number"
+          ? findWordIndexFromChar(wordSegments, fromChar)
+          : 0;
     const bounded = Math.max(0, Math.min(wordSegments.length - 1, preferredIndex));
 
     setActiveWordIndex((previous) => (previous === bounded ? previous : bounded));
@@ -687,8 +658,7 @@ export function App() {
   const canPlay = bookReady && voicesReady;
   const atStart = activeWordIndex <= 0;
   const atEnd = activeWordIndex >= wordSegments.length - 1;
-  const isBuffering =
-    speechSnapshot.phase === "loading" || speechSnapshot.phase === "buffering";
+  const isBuffering = speechSnapshot.phase === "loading" || speechSnapshot.phase === "buffering";
   const playLabel = !voicesReady
     ? "Getting ready…"
     : loadingText
@@ -704,9 +674,7 @@ export function App() {
   // While buffering, keep Play disabled so a second click doesn’t restart by surprise.
   // While errored, Play is enabled as “Try again”.
   const playDisabled =
-    speechSnapshot.phase === "error"
-      ? false
-      : !canPlay || (isSpeaking && !isPaused);
+    speechSnapshot.phase === "error" ? false : !canPlay || (isSpeaking && !isPaused);
 
   const controlButtonProps = {
     size: "sm" as const,
@@ -1056,7 +1024,7 @@ export function App() {
             >
               {loadingText ? (
                 <Text m="0" fontSize="0.95rem" color="muted">
-                  Loading the full text…
+                  Loading book text…
                 </Text>
               ) : (
                 <Box
@@ -1070,6 +1038,7 @@ export function App() {
                   maxH="100%"
                   overflowY="auto"
                   fontFamily="reading"
+                  onScroll={handleReaderScroll}
                 >
                   {(() => {
                     let wordPointer = 0;
@@ -1097,6 +1066,25 @@ export function App() {
                       );
                     });
                   })()}
+                  {loadingMoreText ? (
+                    <Text as="span" display="block" mt="1rem" fontSize="0.9rem" color="muted">
+                      Loading more…
+                    </Text>
+                  ) : null}
+                  {!loadingMoreText && hasMoreText ? (
+                    <Box as="span" display="block" mt="1rem">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => void loadMoreText()}
+                        color="muted"
+                        _hover={{ color: "ink" }}
+                      >
+                        Load more text
+                      </Button>
+                    </Box>
+                  ) : null}
                 </Box>
               )}
             </Box>
@@ -1191,7 +1179,9 @@ export function App() {
             <Input
               type="search"
               value={searchInput}
-              onChange={(event: ChangeEvent<HTMLInputElement>) => setSearchInput(event.target.value)}
+              onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                setSearchInput(event.target.value)
+              }
               placeholder="Search title or author…"
               aria-label="Search books by title or author"
               size="md"
@@ -1301,7 +1291,14 @@ export function App() {
                 </Box>
               ) : null}
               {!loadingMoreBooks && nextPage == null && books.length > 0 ? (
-                <Text as="li" m="0" p="0.35rem 0" fontSize="0.8rem" color="muted" textAlign="center">
+                <Text
+                  as="li"
+                  m="0"
+                  p="0.35rem 0"
+                  fontSize="0.8rem"
+                  color="muted"
+                  textAlign="center"
+                >
                   End of results
                 </Text>
               ) : null}
@@ -1354,9 +1351,7 @@ export function App() {
               {infoState.word}
             </Text>
             <Text m="0.25rem 0 0" fontSize="0.9rem" color="muted">
-              {infoState.status === "loading"
-                ? "Looking up the definition…"
-                : infoState.message}
+              {infoState.status === "loading" ? "Looking up the definition…" : infoState.message}
             </Text>
           </Box>
           <Button

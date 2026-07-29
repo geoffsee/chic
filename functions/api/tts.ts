@@ -207,13 +207,18 @@ const runViaRestApi = async (env: TtsEnv, text: string, speaker: string) => {
     );
   }
 
-  return audioResponse(response.body ?? (await response.arrayBuffer()), contentType || "audio/mpeg");
+  return audioResponse(
+    response.body ?? (await response.arrayBuffer()),
+    contentType || "audio/mpeg",
+  );
 };
 
 export const handleTts = async (request: Request, env: TtsEnv = {}): Promise<Response> => {
   if (request.method === "GET") {
     const hasBinding = Boolean(env.AI);
-    const hasRest = Boolean(readEnv(env, "CLOUDFLARE_ACCOUNT_ID") && readEnv(env, "CLOUDFLARE_API_TOKEN"));
+    const hasRest = Boolean(
+      readEnv(env, "CLOUDFLARE_ACCOUNT_ID") && readEnv(env, "CLOUDFLARE_API_TOKEN"),
+    );
 
     return json({
       available: hasBinding || hasRest,
@@ -240,10 +245,7 @@ export const handleTts = async (request: Request, env: TtsEnv = {}): Promise<Res
     return json({ error: "Missing text to speak." }, 400);
   }
   if (text.length > MAX_CHARS) {
-    return json(
-      { error: `Text too long (max ${MAX_CHARS} characters per request).` },
-      400,
-    );
+    return json({ error: `Text too long (max ${MAX_CHARS} characters per request).` }, 400);
   }
 
   const speaker = isAuraSpeaker(payload.speaker) ? payload.speaker : DEFAULT_SPEAKER;

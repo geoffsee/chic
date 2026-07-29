@@ -1,12 +1,12 @@
 import { serve } from "bun";
 import index from "./index.html";
-import {
-  ProjectGutenbergBookSource,
-  type BookSummary,
-} from "./services/bookService";
+import { handleBookText } from "../functions/api/book-text";
 import { handleTts } from "../functions/api/tts";
+import { ProjectGutenbergBookSource } from "./services/bookService";
+import { createMemoryKv } from "./services/memoryKv";
 
 const gutenbergSource = new ProjectGutenbergBookSource();
+const memoryKv = createMemoryKv();
 
 const server = serve({
   routes: {
@@ -26,10 +26,7 @@ const server = serve({
         } catch (error) {
           return Response.json(
             {
-              error:
-                error instanceof Error
-                  ? error.message
-                  : "Unable to fetch the catalog.",
+              error: error instanceof Error ? error.message : "Unable to fetch the catalog.",
             },
             { status: 502 },
           );
@@ -38,30 +35,7 @@ const server = serve({
     },
     "/api/book-text": {
       async POST(req) {
-        try {
-          const payload = (await req.json()) as BookSummary | null;
-          if (!payload || !payload.id) {
-            return Response.json(
-              { error: "Missing book information in the request body." },
-              { status: 400 },
-            );
-          }
-
-          const text = await gutenbergSource.fetchBookText(payload);
-          return new Response(text, {
-            headers: { "Content-Type": "text/plain; charset=utf-8" },
-          });
-        } catch (error) {
-          return Response.json(
-            {
-              error:
-                error instanceof Error
-                  ? error.message
-                  : "Unable to load the book text.",
-            },
-            { status: 502 },
-          );
-        }
+        return handleBookText(req, { GUTENBERG_KV: memoryKv });
       },
     },
     "/api/tts": {

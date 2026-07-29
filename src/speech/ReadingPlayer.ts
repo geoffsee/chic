@@ -73,10 +73,7 @@ export class ReadingPlayer {
   getSnapshot(): PlayerSnapshot {
     return {
       phase: this.phase,
-      speaking:
-        this.phase === "speaking" ||
-        this.phase === "loading" ||
-        this.phase === "buffering",
+      speaking: this.phase === "speaking" || this.phase === "loading" || this.phase === "buffering",
       paused: this.paused,
       ready: this.ready,
       engine: this.activeEngineId,
@@ -117,11 +114,9 @@ export class ReadingPlayer {
     this.speaker = speaker;
     if (this.cloudAvailable) {
       this.activeEngineId = this.activeEngineId ?? "cloud";
-      const appliesLater = this.phase === "speaking" || this.phase === "paused" || this.phase === "buffering";
-      this.setStatus(
-        engineHelp("cloud", speaker),
-        appliesLater ? COPY.speakerAppliesNext : null,
-      );
+      const appliesLater =
+        this.phase === "speaking" || this.phase === "paused" || this.phase === "buffering";
+      this.setStatus(engineHelp("cloud", speaker), appliesLater ? COPY.speakerAppliesNext : null);
     }
   }
 

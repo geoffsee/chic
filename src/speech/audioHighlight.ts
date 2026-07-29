@@ -31,11 +31,7 @@ export const wordsInChunkText = (text: string): LocalWord[] => {
 /**
  * Word index for a 0–1 progress value (equal time per word).
  */
-export const wordIndexForProgress = (
-  wordCount: number,
-  progress: number,
-  lead = 0,
-): number => {
+export const wordIndexForProgress = (wordCount: number, progress: number, lead = 0): number => {
   if (wordCount <= 0) {
     return 0;
   }
@@ -81,10 +77,7 @@ export const charIndexForAudioProgress = (
  * Compute playback progress from an audio element.
  * Returns null when duration is unknown (caller should skip).
  */
-export const audioProgress = (audio: {
-  currentTime: number;
-  duration: number;
-}): number | null => {
+export const audioProgress = (audio: { currentTime: number; duration: number }): number | null => {
   const { currentTime, duration } = audio;
   // HTMLMediaElement uses NaN / Infinity while metadata is loading.
   if (!Number.isFinite(duration) || duration <= 0) {

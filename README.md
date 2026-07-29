@@ -12,6 +12,7 @@ Live at [chic.geoffsee.com](https://chic.geoffsee.com).
 
 - Browse Project Gutenberg books through the app API (paginated, lean catalog payloads)
 - Infinite-scroll library with title/author search
+- Book text ingested into KV and streamed to the UI one page at a time
 - Read along with word-level highlighting while audio plays
 - Two speech engines:
   - **Browser** — `speechSynthesis` (works offline after the book is loaded)
@@ -58,7 +59,7 @@ Shared handlers live under `functions/api/` and are wired for both Bun (dev) and
 | Route | Method | Purpose |
 | --- | --- | --- |
 | `/api/gutenberg-books` | `GET` | Paginated catalog (`?page=1&search=dickens&force=true`) |
-| `/api/book-text` | `POST` | Fetch prepared plain text for a book summary |
+| `/api/book-text` | `POST` | Ingest book into KV; return one text page (`{ id, textUrl?, page }`) |
 | `/api/tts` | `GET` / `POST` | Cloud TTS (Aura-2); requires AI binding in production |
 | `/api/word-info` | `GET` / `POST` | Dictionary definition for a word (+ optional context) |
 
@@ -79,10 +80,11 @@ Cloud TTS needs the Workers AI binding. Without it, the app still works with the
 ## Project layout
 
 ```
-src/                 React app, speech player, book services
+src/                 React app, speech player, book services/hooks
+src/services/        Catalog + chunked book-text helpers (ingest, chunk, types)
 functions/api/       Worker/Bun API handlers (books, text, TTS, word info)
 index.ts             Cloudflare Worker entry (routes + assets)
-tests/               Bun test suites for speech, TTS, Gutenberg text, progress
+tests/               Bun test suites for speech, TTS, catalog, chunked text
 example.wrangler.toml  Deploy config template
 ```
 

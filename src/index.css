@@ -6,7 +6,10 @@
 .word {
   padding: 0 2px;
   border-radius: 6px;
-  transition: background-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease,
+    box-shadow 120ms ease;
 }
 
 .word.is-current {

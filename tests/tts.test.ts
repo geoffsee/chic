@@ -393,7 +393,9 @@ describe("cloudTts client", () => {
     }) as unknown as typeof fetch;
     expect(await fetchCloudTtsStatus()).toEqual({ available: false });
 
-    globalThis.fetch = mock(async () => new Response("nope", { status: 500 })) as unknown as typeof fetch;
+    globalThis.fetch = mock(
+      async () => new Response("nope", { status: 500 }),
+    ) as unknown as typeof fetch;
     expect(await fetchCloudTtsStatus()).toEqual({ available: false });
   });
 

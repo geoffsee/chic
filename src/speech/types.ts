@@ -7,13 +7,7 @@ export type EngineId = "cloud" | "browser";
 
 export type HighlightSource = "start" | "boundary" | "timed";
 
-export type PlayerPhase =
-  | "idle"
-  | "loading"
-  | "buffering"
-  | "speaking"
-  | "paused"
-  | "error";
+export type PlayerPhase = "idle" | "loading" | "buffering" | "speaking" | "paused" | "error";
 
 /** Transient UX notice — never silent policy changes. */
 export type PlayerNotice = {

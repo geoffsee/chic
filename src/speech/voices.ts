@@ -20,9 +20,7 @@ export const pickPreferredVoice = (voices: SpeechSynthesisVoice[]) => {
  * Wait until the browser exposes at least one voice, or the timeout elapses.
  * Callers should still allow playback after timeout (default voice).
  */
-export const waitForBrowserVoices = (
-  timeoutMs = 2500,
-): Promise<SpeechSynthesisVoice[]> => {
+export const waitForBrowserVoices = (timeoutMs = 2500): Promise<SpeechSynthesisVoice[]> => {
   if (typeof window === "undefined" || !("speechSynthesis" in window)) {
     return Promise.resolve([]);
   }

@@ -29,11 +29,7 @@ const normalizeWord = (value: string) => value.trim().toLowerCase();
 const capitalize = (value: string) =>
   value ? value.charAt(0).toUpperCase() + value.slice(1) : value;
 
-const buildExplanation = (
-  payloadWord: string,
-  entry: CachedDefinition,
-  context?: string,
-) => {
+const buildExplanation = (payloadWord: string, entry: CachedDefinition, context?: string) => {
   const parts: string[] = [];
   const polishedWord = capitalize(payloadWord);
   if (entry.partOfSpeech) {
@@ -108,24 +104,18 @@ export const handleWordInfo = async (request: Request, env: Env) => {
 
   const payload = await request.json().catch(() => null);
   if (!ensurePayload(payload)) {
-    return new Response(
-      JSON.stringify({ error: "Provide a word to look up." }),
-      {
-        status: 400,
-        headers: { "Content-Type": "application/json; charset=utf-8" },
-      },
-    );
+    return new Response(JSON.stringify({ error: "Provide a word to look up." }), {
+      status: 400,
+      headers: { "Content-Type": "application/json; charset=utf-8" },
+    });
   }
 
   const trimmedWord = payload.word.trim();
   if (!trimmedWord) {
-    return new Response(
-      JSON.stringify({ error: "Provide a non-empty word." }),
-      {
-        status: 400,
-        headers: { "Content-Type": "application/json; charset=utf-8" },
-      },
-    );
+    return new Response(JSON.stringify({ error: "Provide a non-empty word." }), {
+      status: 400,
+      headers: { "Content-Type": "application/json; charset=utf-8" },
+    });
   }
 
   const key = `word-info:${normalizeWord(trimmedWord)}`;
@@ -152,14 +142,10 @@ export const handleWordInfo = async (request: Request, env: Env) => {
       { headers: { "Content-Type": "application/json; charset=utf-8" } },
     );
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Unable to retrieve word information.";
-    return new Response(
-      JSON.stringify({ error: message }),
-      {
-        status: 502,
-        headers: { "Content-Type": "application/json; charset=utf-8" },
-      },
-    );
+    const message = error instanceof Error ? error.message : "Unable to retrieve word information.";
+    return new Response(JSON.stringify({ error: message }), {
+      status: 502,
+      headers: { "Content-Type": "application/json; charset=utf-8" },
+    });
   }
 };

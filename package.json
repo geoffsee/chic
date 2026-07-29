@@ -11,7 +11,11 @@
     "build": "rm -rf dist && NODE_ENV=production bun build ./src/index.html --outdir=dist --target=browser --splitting --minify --define:process.env.NODE_ENV='\"production\"' --env='BUN_PUBLIC_*'",
     "start": "NODE_ENV=production bun src/index.tsx",
     "deploy": "bun run build && bunx wrangler deploy",
-    "test": "bun test tests"
+    "test": "bun test tests",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "lint": "biome lint .",
+    "check": "biome check ."
   },
   "dependencies": {
     "@chakra-ui/react": "^3.36.1",
@@ -21,6 +25,7 @@
     "react-dom": "^19"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.5.6",
     "@types/bun": "latest",
     "@types/react": "^19",
     "@types/react-dom": "^19",

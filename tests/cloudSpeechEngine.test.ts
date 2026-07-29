@@ -16,7 +16,8 @@ beforeAll(() => {
       setTimeout(() => cb(Date.now()), 0) as unknown as number) as typeof requestAnimationFrame;
   }
   if (typeof globalThis.cancelAnimationFrame !== "function") {
-    globalThis.cancelAnimationFrame = ((id: number) => clearTimeout(id)) as typeof cancelAnimationFrame;
+    globalThis.cancelAnimationFrame = ((id: number) =>
+      clearTimeout(id)) as typeof cancelAnimationFrame;
   }
 });
 

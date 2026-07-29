@@ -42,12 +42,10 @@ const config = defineConfig({
     tokens: {
       fonts: {
         body: {
-          value:
-            '"Space Grotesk", "Sora", "Inter", system-ui, -apple-system, sans-serif',
+          value: '"Space Grotesk", "Sora", "Inter", system-ui, -apple-system, sans-serif',
         },
         heading: {
-          value:
-            '"Space Grotesk", "Sora", "Inter", system-ui, -apple-system, sans-serif',
+          value: '"Space Grotesk", "Sora", "Inter", system-ui, -apple-system, sans-serif',
         },
         reading: {
           value: '"Georgia", "Times New Roman", serif',
@@ -107,8 +105,7 @@ const config = defineConfig({
       shadows: {
         glow: { value: "0 18px 40px rgba(9, 8, 4, 0.75)" },
         panel: {
-          value:
-            "inset 0 0 0 1px rgba(240, 235, 227, 0.04), 0 25px 40px rgba(9, 8, 4, 0.55)",
+          value: "inset 0 0 0 1px rgba(240, 235, 227, 0.04), 0 25px 40px rgba(9, 8, 4, 0.55)",
         },
         cardHover: { value: "0 10px 25px rgba(9, 8, 4, 0.45)" },
         tooltip: { value: "0 25px 50px rgba(9, 8, 4, 0.7)" },
