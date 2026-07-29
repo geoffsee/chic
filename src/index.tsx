@@ -15,8 +15,14 @@ const server = serve({
         try {
           const url = new URL(req.url, "http://localhost");
           const forceReload = url.searchParams.get("force") === "true";
-          const books = await gutenbergSource.listBooks({ forceReload });
-          return Response.json(books);
+          const page = Number.parseInt(url.searchParams.get("page") ?? "1", 10);
+          const search = url.searchParams.get("search") ?? "";
+          const catalog = await gutenbergSource.listBooks({
+            forceReload,
+            page: Number.isFinite(page) && page > 0 ? page : 1,
+            search,
+          });
+          return Response.json(catalog);
         } catch (error) {
           return Response.json(
             {

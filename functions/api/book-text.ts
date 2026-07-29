@@ -61,12 +61,12 @@ const fetchWithHeaders = (input: RequestInfo, init?: RequestInit) =>
     },
   });
 
-const buildFallbackTextUrl = (book?: GutendexBook) => {
-  const id = book?.id;
-  if (!id) {
+const buildFallbackTextUrl = (id?: number | string) => {
+  const numeric = typeof id === "number" ? id : Number(id);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
     return null;
   }
-  return `https://www.gutenberg.org/cache/epub/${id}/pg${id}.txt`;
+  return `https://www.gutenberg.org/cache/epub/${numeric}/pg${numeric}.txt`;
 };
 
 const normalizeUrl = (value?: string) => {
@@ -87,8 +87,8 @@ const normalizeUrl = (value?: string) => {
 
 const collectTextCandidates = (book: BookSummary) => {
   const seen = new Set<string>();
-  const add = (value?: string) => {
-    const normalized = normalizeUrl(value);
+  const add = (value?: string | null) => {
+    const normalized = normalizeUrl(value ?? undefined);
     if (normalized) {
       seen.add(normalized);
       seen.add(normalized.replace(/-0\.txt$/, ".txt"));
@@ -97,7 +97,9 @@ const collectTextCandidates = (book: BookSummary) => {
 
   add(book.textUrl);
   add(pickTextUrl(book.metadata?.formats));
-  add(buildFallbackTextUrl(book.metadata));
+  add(buildFallbackTextUrl(book.metadata?.id));
+  // Lean catalog responses omit metadata; still resolve plain text from the Gutenberg id.
+  add(buildFallbackTextUrl(book.id));
   return Array.from(seen);
 };
 

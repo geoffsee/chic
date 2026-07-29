@@ -8,7 +8,7 @@
   "author": "geoffsee",
   "scripts": {
     "dev": "bun --hot src/index.tsx",
-    "build": "rm -rf dist && bun build ./src/index.html --outdir=dist --target=browser --splitting --minify  --define:process.env.NODE_ENV='\"production\"' --env='BUN_PUBLIC_*'",
+    "build": "rm -rf dist && NODE_ENV=production bun build ./src/index.html --outdir=dist --target=browser --splitting --minify --define:process.env.NODE_ENV='\"production\"' --env='BUN_PUBLIC_*'",
     "start": "NODE_ENV=production bun src/index.tsx",
     "deploy": "bun run build && bunx wrangler deploy",
     "test": "bun test tests"

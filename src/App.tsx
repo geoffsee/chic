@@ -6,6 +6,7 @@ import {
   useState,
   type ChangeEvent,
   type KeyboardEvent,
+  type UIEvent,
 } from "react";
 import {
   Badge,
@@ -15,6 +16,7 @@ import {
   Grid,
   Heading,
   HStack,
+  Input,
   Text,
   VStack,
 } from "@chakra-ui/react";
@@ -157,11 +159,19 @@ export function App() {
   const [selectedBook, setSelectedBook] = useState<BookSummary | null>(null);
   const [bookText, setBookText] = useState("");
   const [loadingBooks, setLoadingBooks] = useState(true);
+  const [loadingMoreBooks, setLoadingMoreBooks] = useState(false);
   const [loadingText, setLoadingText] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
   const [textError, setTextError] = useState<string | null>(null);
-  const [catalogRefresh, setCatalogRefresh] = useState(0);
+  const [searchInput, setSearchInput] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  /** Single query object so search resets and page advances never race. */
+  const [catalogQuery, setCatalogQuery] = useState({ search: "", page: 1, nonce: 0 });
+  const [nextPage, setNextPage] = useState<number | null>(null);
+  const [catalogCount, setCatalogCount] = useState(0);
   const forceCatalogReloadRef = useRef(false);
+  const loadMoreInFlightRef = useRef(false);
+  const bookListRef = useRef<HTMLDivElement | null>(null);
   const [sessionPositions, setSessionPositions] = useState<Record<string, ReadingPosition>>(() => {
     if (typeof window === "undefined") {
       return {};
@@ -190,49 +200,102 @@ export function App() {
   const wordSegments = useMemo(() => segments.filter((segment) => segment.isWord), [segments]);
 
   useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedSearch(searchInput.trim());
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [searchInput]);
+
+  // Debounced search always restarts at page 1 (new query object identity).
+  useEffect(() => {
+    setCatalogQuery((previous) => {
+      if (previous.search === debouncedSearch && previous.page === 1) {
+        return previous;
+      }
+      return { search: debouncedSearch, page: 1, nonce: previous.nonce };
+    });
+  }, [debouncedSearch]);
+
+  useEffect(() => {
     let cancelled = false;
-    setLoadingBooks(true);
+    const { page: pageToLoad, search } = catalogQuery;
+    const isFirstPage = pageToLoad === 1;
+
+    if (isFirstPage) {
+      setLoadingBooks(true);
+      setLoadingMoreBooks(false);
+      loadMoreInFlightRef.current = false;
+    } else {
+      setLoadingMoreBooks(true);
+    }
     setListError(null);
 
-    const shouldForceReload = forceCatalogReloadRef.current;
-    forceCatalogReloadRef.current = false;
+    const shouldForceReload = forceCatalogReloadRef.current && isFirstPage;
+    if (isFirstPage) {
+      forceCatalogReloadRef.current = false;
+    }
 
     bookSource
-      .listBooks({ forceReload: shouldForceReload })
-      .then((fetchedBooks) => {
+      .listBooks({
+        forceReload: shouldForceReload,
+        page: pageToLoad,
+        search,
+      })
+      .then((page) => {
         if (cancelled) {
           return;
         }
-        if (!Array.isArray(fetchedBooks) || fetchedBooks.length === 0) {
-          setListError("No books available right now.");
-          setBooks([]);
+
+        const fetchedBooks = page.books ?? [];
+        setCatalogCount(typeof page.count === "number" ? page.count : fetchedBooks.length);
+        setNextPage(page.nextPage ?? null);
+
+        if (isFirstPage) {
+          if (fetchedBooks.length === 0) {
+            setListError(
+              search ? `No books match “${search}”.` : "No books available right now.",
+            );
+            setBooks([]);
+            return;
+          }
+          setBooks(fetchedBooks);
+          // Do not auto-select — user must pick a book before text loads.
           return;
         }
-        setBooks(fetchedBooks);
-        setSelectedBook((previous) => {
-          if (previous && fetchedBooks.some((book) => book.id === previous.id)) {
-            return previous;
-          }
-          return fetchedBooks[0] ?? null;
+
+        setBooks((previous) => {
+          const seen = new Set(previous.map((book) => book.id));
+          const appended = fetchedBooks.filter((book) => !seen.has(book.id));
+          return previous.concat(appended);
         });
       })
       .catch((error) => {
         if (cancelled) {
           return;
         }
-        setListError(error?.message ?? "Unable to load the catalog.");
-        setBooks([]);
+        if (isFirstPage) {
+          setListError(error?.message ?? "Unable to load the catalog.");
+          setBooks([]);
+          setNextPage(null);
+        } else {
+          setListError(error?.message ?? "Unable to load more books.");
+        }
       })
       .finally(() => {
         // Always clear loading — even if this effect was cancelled — so StrictMode
         // remounts never leave the sidebar stuck on “Curating…”.
-        setLoadingBooks(false);
+        if (isFirstPage) {
+          setLoadingBooks(false);
+        } else {
+          setLoadingMoreBooks(false);
+          loadMoreInFlightRef.current = false;
+        }
       });
 
     return () => {
       cancelled = true;
     };
-  }, [bookSource, catalogRefresh]);
+  }, [bookSource, catalogQuery]);
 
   useEffect(() => {
     if (!selectedBook) {
@@ -582,8 +645,38 @@ export function App() {
 
   const refreshCatalog = () => {
     forceCatalogReloadRef.current = true;
-    setCatalogRefresh((value) => value + 1);
+    setNextPage(null);
+    setCatalogQuery((previous) => ({
+      search: previous.search,
+      page: 1,
+      nonce: previous.nonce + 1,
+    }));
   };
+
+  const loadMoreBooks = useCallback(() => {
+    if (loadingBooks || loadingMoreBooks || loadMoreInFlightRef.current) {
+      return;
+    }
+    if (nextPage == null) {
+      return;
+    }
+    loadMoreInFlightRef.current = true;
+    setCatalogQuery((previous) => ({
+      ...previous,
+      page: nextPage,
+    }));
+  }, [loadingBooks, loadingMoreBooks, nextPage]);
+
+  const handleBookListScroll = useCallback(
+    (event: UIEvent<HTMLDivElement>) => {
+      const el = event.currentTarget;
+      const remaining = el.scrollHeight - el.scrollTop - el.clientHeight;
+      if (remaining < 160) {
+        loadMoreBooks();
+      }
+    },
+    [loadMoreBooks],
+  );
 
   useEffect(() => stopReading, [stopReading]);
   useEffect(() => {
@@ -878,39 +971,13 @@ export function App() {
       minH="100vh"
       w="100%"
       px={{ base: "1rem", sm: "clamp(1.2rem, 3vw, 3rem)" }}
-      pt={{ base: "1.5rem", sm: "2.5rem" }}
+      pt={{ base: "1rem", sm: "1.5rem" }}
       pb={{ base: "5rem", sm: "clamp(5rem, 7vw, 6rem)" }}
       display="flex"
       flexDirection="column"
       gap="1rem"
       color="ink"
     >
-      <Box as="header" maxW="960px" mx="auto" w="100%" textAlign="left">
-        <Text
-          m="0"
-          fontSize="0.85rem"
-          letterSpacing="0.2em"
-          textTransform="uppercase"
-          color="fg.accent"
-        >
-          Curated classics → public domain
-        </Text>
-        <Heading
-          as="h1"
-          fontSize={{ base: "2.5rem", md: "clamp(2.5rem, 3vw, 3.4rem)" }}
-          mt="0.4rem"
-          mb="0.5rem"
-          fontWeight="semibold"
-          color="ink"
-        >
-          Browse Project Gutenberg books
-        </Heading>
-        <Text maxW="780px" mt="0.8rem" color="muted">
-          Your place in each book is saved on this device, so the next visit opens where you left
-          off.
-        </Text>
-      </Box>
-
       <Grid
         templateColumns={{ base: "1fr", lg: "minmax(0, 1.7fr) minmax(0, 1fr)" }}
         gap="2rem"
@@ -1092,7 +1159,7 @@ export function App() {
                 textTransform="uppercase"
                 color="fg.accent"
               >
-                Available books
+                Library
               </Text>
               <Heading
                 as="h3"
@@ -1102,7 +1169,7 @@ export function App() {
                 fontWeight="semibold"
                 color="ink"
               >
-                Project Gutenberg via Gutendex
+                Project Gutenberg
               </Heading>
             </Box>
             <Button
@@ -1120,6 +1187,34 @@ export function App() {
             </Button>
           </Flex>
 
+          <Box>
+            <Input
+              type="search"
+              value={searchInput}
+              onChange={(event: ChangeEvent<HTMLInputElement>) => setSearchInput(event.target.value)}
+              placeholder="Search title or author…"
+              aria-label="Search books by title or author"
+              size="md"
+              borderRadius="control"
+              borderWidth="1px"
+              borderColor="border.strong"
+              bg="rgba(255, 255, 255, 0.04)"
+              color="ink"
+              _placeholder={{ color: "muted" }}
+              _focusVisible={{
+                borderColor: "fg.accent",
+                outline: "none",
+                boxShadow: "0 0 0 1px var(--chakra-colors-fg-accent)",
+              }}
+            />
+            {!loadingBooks && catalogCount > 0 ? (
+              <Text m="0.45rem 0 0" fontSize="0.8rem" color="muted">
+                {catalogCount.toLocaleString()} book{catalogCount === 1 ? "" : "s"}
+                {catalogQuery.search ? ` matching “${catalogQuery.search}”` : ""}
+              </Text>
+            ) : null}
+          </Box>
+
           {listError ? (
             <Text m="0" fontSize="0.95rem" color="fg.warning">
               {listError}
@@ -1127,11 +1222,12 @@ export function App() {
           ) : null}
           {loadingBooks ? (
             <Text m="0" fontSize="0.95rem" color="muted">
-              Curating a list of classics…
+              Loading books…
             </Text>
           ) : (
             <VStack
               as="ul"
+              ref={bookListRef}
               align="stretch"
               gap="0.75rem"
               m="0"
@@ -1139,6 +1235,7 @@ export function App() {
               listStyleType="none"
               overflowY="auto"
               maxH="70vh"
+              onScroll={handleBookListScroll}
             >
               {books.map((book) => {
                 const active = selectedBook?.id === book.id;
@@ -1183,6 +1280,31 @@ export function App() {
                   </Box>
                 );
               })}
+              {loadingMoreBooks ? (
+                <Text as="li" m="0" p="0.5rem 0" fontSize="0.9rem" color="muted" textAlign="center">
+                  Loading more…
+                </Text>
+              ) : null}
+              {!loadingMoreBooks && nextPage != null ? (
+                <Box as="li" listStyleType="none">
+                  <Button
+                    type="button"
+                    width="100%"
+                    size="sm"
+                    variant="ghost"
+                    onClick={loadMoreBooks}
+                    color="muted"
+                    _hover={{ color: "ink", bg: "rgba(255, 255, 255, 0.04)" }}
+                  >
+                    Load more
+                  </Button>
+                </Box>
+              ) : null}
+              {!loadingMoreBooks && nextPage == null && books.length > 0 ? (
+                <Text as="li" m="0" p="0.35rem 0" fontSize="0.8rem" color="muted" textAlign="center">
+                  End of results
+                </Text>
+              ) : null}
             </VStack>
           )}
         </Box>

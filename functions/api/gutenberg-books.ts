@@ -1,3 +1,5 @@
+import { FALLBACK_CATALOG } from "../../src/services/fallbackCatalog";
+
 type KVNamespace = {
   get(key: string): Promise<string | null>;
   put(key: string, value: string, options?: { expirationTtl?: number }): Promise<void>;
@@ -12,14 +14,22 @@ type GutendexBook = {
   subjects?: string[];
 };
 
-type BookSummary = {
+/** Lean catalog entry — no Gutendex formats/metadata blobs. */
+export type BookSummary = {
   id: string;
   title: string;
   authors: string[];
   sourceLabel: string;
   description?: string;
-  metadata?: GutendexBook;
   textUrl?: string;
+};
+
+export type CatalogPage = {
+  books: BookSummary[];
+  page: number;
+  count: number;
+  nextPage: number | null;
+  search: string;
 };
 
 type Env = {
@@ -27,14 +37,16 @@ type Env = {
 };
 
 const GUTENDEX_ENDPOINT = "https://gutendex.com/books/";
-const CATALOG_FETCH_TIMEOUT_MS = 10_000;
+const CATALOG_FETCH_TIMEOUT_MS = 15_000;
 const TEXT_FORMAT_PRIORITY = [
   "text/plain; charset=utf-8",
   "text/plain",
   "text/plain; charset=us-ascii",
 ];
-const CATALOG_TTL = 60 * 5; // 5 minutes
-const CACHE_KEY = "catalog";
+const CATALOG_TTL = 60 * 15; // 15 minutes
+/** Bump when response shape changes so KV never serves stale payloads. */
+const CACHE_VERSION = "v3";
+const PAGE_SIZE = 32;
 
 const pickTextUrl = (formats: Record<string, string | null> = {}) => {
   for (const key of TEXT_FORMAT_PRIORITY) {
@@ -50,13 +62,16 @@ const pickTextUrl = (formats: Record<string, string | null> = {}) => {
   return fallback ?? null;
 };
 
+const buildFallbackTextUrl = (id: number) =>
+  `https://www.gutenberg.org/cache/epub/${id}/pg${id}.txt`;
+
 const describeBook = (book: GutendexBook) => {
   const buckets: string[] = [];
   if (book.bookshelves?.length) {
     buckets.push(...book.bookshelves.slice(0, 2));
   }
   if (book.subjects?.length) {
-    buckets.push(...(book.subjects.slice(0, 2)));
+    buckets.push(...book.subjects.slice(0, 2));
   }
   return buckets.length ? buckets.join(" · ") : undefined;
 };
@@ -69,8 +84,7 @@ const toBookSummary = (book: GutendexBook): BookSummary => ({
     .filter((name): name is string => Boolean(name)),
   sourceLabel: "Project Gutenberg",
   description: describeBook(book),
-  metadata: book,
-  textUrl: pickTextUrl(book.formats) ?? undefined,
+  textUrl: pickTextUrl(book.formats) ?? buildFallbackTextUrl(book.id),
 });
 
 const USER_AGENT = "chic/1.0 (+https://chic.geoffsee.com)";
@@ -93,111 +107,54 @@ const fetchWithHeaders = async (input: RequestInfo, init?: RequestInit) => {
   }
 };
 
-const FALLBACK_BOOKS: BookSummary[] = [
-  {
-    id: "14838",
-    title: "The Tale of Peter Rabbit",
-    authors: ["Potter, Beatrix"],
-    sourceLabel: "Project Gutenberg",
-    description: "Animals · Short picture story",
-    textUrl: "https://www.gutenberg.org/ebooks/14838.txt.utf-8",
-  },
-  {
-    id: "14407",
-    title: "The Tale of Benjamin Bunny",
-    authors: ["Potter, Beatrix"],
-    sourceLabel: "Project Gutenberg",
-    description: "Animals · Gentle adventure",
-    textUrl: "https://www.gutenberg.org/ebooks/14407.txt.utf-8",
-  },
-  {
-    id: "14837",
-    title: "The Tale of Tom Kitten",
-    authors: ["Potter, Beatrix"],
-    sourceLabel: "Project Gutenberg",
-    description: "Kittens · Funny short story",
-    textUrl: "https://www.gutenberg.org/ebooks/14837.txt.utf-8",
-  },
-  {
-    id: "15137",
-    title: "The Tale of Mrs. Tiggy-Winkle",
-    authors: ["Potter, Beatrix"],
-    sourceLabel: "Project Gutenberg",
-    description: "Animals · Gentle fantasy",
-    textUrl: "https://www.gutenberg.org/ebooks/15137.txt.utf-8",
-  },
-  {
-    id: "14872",
-    title: "The Tale of Squirrel Nutkin",
-    authors: ["Potter, Beatrix"],
-    sourceLabel: "Project Gutenberg",
-    description: "Animals · Riddles and adventure",
-    textUrl: "https://www.gutenberg.org/ebooks/14872.txt.utf-8",
-  },
-  {
-    id: "14848",
-    title: "The Story of Miss Moppet",
-    authors: ["Potter, Beatrix"],
-    sourceLabel: "Project Gutenberg",
-    description: "Cat and mouse · Very short story",
-    textUrl: "https://www.gutenberg.org/ebooks/14848.txt.utf-8",
-  },
-  {
-    id: "18735",
-    title: "The Little Red Hen",
-    authors: ["Williams, Florence White"],
-    sourceLabel: "Project Gutenberg",
-    description: "Animals · Repetition and teamwork",
-    textUrl: "https://www.gutenberg.org/ebooks/18735.txt.utf-8",
-  },
-  {
-    id: "18155",
-    title: "The Story of the Three Little Pigs",
-    authors: ["Brooke, L. Leslie"],
-    sourceLabel: "Project Gutenberg",
-    description: "Folktale · Repetition and rhyme",
-    textUrl: "https://www.gutenberg.org/ebooks/18155.txt.utf-8",
-  },
-  {
-    id: "23322",
-    title: "The Three Bears",
-    authors: ["Unknown"],
-    sourceLabel: "Project Gutenberg",
-    description: "Fairy tale · Familiar repetition",
-    textUrl: "https://www.gutenberg.org/ebooks/23322.txt.utf-8",
-  },
-  {
-    id: "15661",
-    title: "The Golden Goose Book",
-    authors: ["Brooke, L. Leslie"],
-    sourceLabel: "Project Gutenberg",
-    description: "Nursery tales · Rhymes and pictures",
-    textUrl: "https://www.gutenberg.org/ebooks/15661.txt.utf-8",
-  },
-  {
-    id: "136",
-    title: "A Child's Garden of Verses",
-    authors: ["Stevenson, Robert Louis"],
-    sourceLabel: "Project Gutenberg",
-    description: "Poetry · Short read-aloud verses",
-    textUrl: "https://www.gutenberg.org/ebooks/136.txt.utf-8",
-  },
-  {
-    id: "11757",
-    title: "The Velveteen Rabbit",
-    authors: ["Williams, Margery"],
-    sourceLabel: "Project Gutenberg",
-    description: "Toys · Gentle read-aloud story",
-    textUrl: "https://www.gutenberg.org/ebooks/11757.txt.utf-8",
-  },
-];
+const normalizeSearch = (value: string | null) =>
+  (value ?? "").trim().replace(/\s+/g, " ").slice(0, 120);
+
+const parsePage = (value: string | null) => {
+  const parsed = Number.parseInt(value ?? "1", 10);
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return 1;
+  }
+  return Math.min(parsed, 10_000);
+};
+
+const matchesSearch = (book: BookSummary, search: string) => {
+  if (!search) {
+    return true;
+  }
+  const needle = search.toLowerCase();
+  if (book.title.toLowerCase().includes(needle)) {
+    return true;
+  }
+  return book.authors.some((author) => author.toLowerCase().includes(needle));
+};
+
+const fallbackPage = (page: number, search: string): CatalogPage => {
+  const filtered = FALLBACK_CATALOG.filter((book) => matchesSearch(book, search));
+  const start = (page - 1) * PAGE_SIZE;
+  const slice = filtered.slice(start, start + PAGE_SIZE);
+  const hasMore = start + slice.length < filtered.length;
+  return {
+    books: slice.map((book) => ({ ...book })),
+    page,
+    count: filtered.length,
+    nextPage: hasMore ? page + 1 : null,
+    search,
+  };
+};
+
+const cacheKeyFor = (page: number, search: string) =>
+  `catalog:${CACHE_VERSION}:p=${page}:q=${encodeURIComponent(search.toLowerCase())}`;
 
 export const handleGutenbergBooks = async (request: Request, env: Env) => {
   const requestUrl = new URL(request.url);
   const forceReload = requestUrl.searchParams.get("force") === "true";
+  const page = parsePage(requestUrl.searchParams.get("page"));
+  const search = normalizeSearch(requestUrl.searchParams.get("search"));
+  const cacheKey = cacheKeyFor(page, search);
 
   if (!forceReload) {
-    const cached = await env.GUTENBERG_KV.get(CACHE_KEY);
+    const cached = await env.GUTENBERG_KV.get(cacheKey);
     if (cached) {
       return new Response(cached, {
         headers: { "Content-Type": "application/json; charset=utf-8" },
@@ -209,6 +166,10 @@ export const handleGutenbergBooks = async (request: Request, env: Env) => {
   endpoint.searchParams.set("languages", "en");
   endpoint.searchParams.set("mime_type", "text/plain");
   endpoint.searchParams.set("sort", "downloads");
+  endpoint.searchParams.set("page", String(page));
+  if (search) {
+    endpoint.searchParams.set("search", search);
+  }
 
   try {
     const response = await fetchWithHeaders(endpoint.toString());
@@ -216,27 +177,48 @@ export const handleGutenbergBooks = async (request: Request, env: Env) => {
       throw new Error(`Gutendex status ${response.status}`);
     }
 
-    const payload = (await response.json()) as { results?: GutendexBook[] };
-    if (!Array.isArray(payload.results) || payload.results.length === 0) {
-      throw new Error("empty results");
+    const payload = (await response.json()) as {
+      count?: number;
+      next?: string | null;
+      results?: GutendexBook[];
+    };
+    if (!Array.isArray(payload.results)) {
+      throw new Error("invalid results");
     }
 
-    const books: BookSummary[] = payload.results.slice(0, 12).map(toBookSummary);
-    const body = JSON.stringify(books);
-    await env.GUTENBERG_KV.put(CACHE_KEY, body, { expirationTtl: CATALOG_TTL });
+    const books = payload.results.map(toBookSummary);
+    const count = typeof payload.count === "number" ? payload.count : books.length;
+    const nextPage = payload.next ? page + 1 : null;
+    const body: CatalogPage = {
+      books,
+      page,
+      count,
+      nextPage,
+      search,
+    };
+    const serialized = JSON.stringify(body);
+    await env.GUTENBERG_KV.put(cacheKey, serialized, { expirationTtl: CATALOG_TTL });
 
-    return new Response(body, {
+    return new Response(serialized, {
       headers: { "Content-Type": "application/json; charset=utf-8" },
     });
   } catch {
-    // Prefer a usable offline list over a hard 502 in the reader UI.
-    const body = JSON.stringify(FALLBACK_BOOKS);
-    return new Response(body, {
-      status: 200,
-      headers: {
-        "Content-Type": "application/json; charset=utf-8",
-        "X-Catalog-Source": "fallback",
-      },
+    // First page: prefer a usable offline list over a hard 502.
+    // Later pages: surface the failure so infinite scroll does not look "finished".
+    if (page === 1) {
+      const body = JSON.stringify(fallbackPage(page, search));
+      return new Response(body, {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+          "X-Catalog-Source": "fallback",
+        },
+      });
+    }
+
+    return new Response(JSON.stringify({ error: "Unable to load more books." }), {
+      status: 502,
+      headers: { "Content-Type": "application/json; charset=utf-8" },
     });
   }
 };

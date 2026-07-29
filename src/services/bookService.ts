@@ -1,27 +1,42 @@
 import { prepareGutenbergText } from "./gutenbergText";
 import { FALLBACK_CATALOG } from "./fallbackCatalog";
 
+/** Lean catalog entry returned by the API (no Gutendex metadata blobs). */
 export type BookSummary = {
   id: string;
   title: string;
   authors: string[];
   sourceLabel: string;
   description?: string;
-  metadata?: GutendexBook;
   textUrl?: string;
+};
+
+export type CatalogPage = {
+  books: BookSummary[];
+  page: number;
+  count: number;
+  nextPage: number | null;
+  search: string;
+};
+
+export type ListBooksOptions = {
+  forceReload?: boolean;
+  page?: number;
+  search?: string;
 };
 
 export interface BookSource {
   label: string;
-  listBooks(options?: { forceReload?: boolean }): Promise<BookSummary[]>;
+  listBooks(options?: ListBooksOptions): Promise<CatalogPage>;
   fetchBookText(book: BookSummary): Promise<string>;
 }
 
 /** Trailing slash avoids a 301 that some clients mishandle. */
 const GUTENDEX_ENDPOINT = "https://gutendex.com/books/";
 const USER_AGENT = "chic/1.0 (+https://seemueller.com/chic)";
-const CATALOG_FETCH_TIMEOUT_MS = 10_000;
+const CATALOG_FETCH_TIMEOUT_MS = 15_000;
 const TEXT_FETCH_TIMEOUT_MS = 45_000;
+const PAGE_SIZE = 32;
 
 const TEXT_FORMAT_PRIORITY = [
   "text/plain; charset=utf-8",
@@ -29,7 +44,7 @@ const TEXT_FORMAT_PRIORITY = [
   "text/plain; charset=us-ascii",
 ];
 
-const CATALOG_CACHE_TTL = 1000 * 60 * 5; // 5 minutes
+const CATALOG_CACHE_TTL = 1000 * 60 * 15; // 15 minutes
 const BOOK_TEXT_CACHE_TTL = 1000 * 60 * 60; // 1 hour
 
 type CacheEntry<T> = {
@@ -50,6 +65,9 @@ type GutendexBook = {
 };
 
 type GutendexResponse = {
+  count: number;
+  next: string | null;
+  previous: string | null;
   results: GutendexBook[];
 };
 
@@ -67,11 +85,12 @@ const pickTextUrl = (formats: Record<string, string | null> = {}) => {
   return fallback ?? null;
 };
 
-const buildFallbackTextUrl = (book?: GutendexBook) => {
-  if (!book) {
+const buildFallbackTextUrl = (id: number | string) => {
+  const numeric = typeof id === "number" ? id : Number(id);
+  if (!Number.isFinite(numeric)) {
     return null;
   }
-  return `https://www.gutenberg.org/cache/epub/${book.id}/pg${book.id}.txt`;
+  return `https://www.gutenberg.org/cache/epub/${numeric}/pg${numeric}.txt`;
 };
 
 const describeBook = (book: GutendexBook) => {
@@ -85,30 +104,86 @@ const describeBook = (book: GutendexBook) => {
   return buckets.length ? buckets.join(" · ") : undefined;
 };
 
+const toBookSummary = (book: GutendexBook): BookSummary => ({
+  id: String(book.id),
+  title: book.title,
+  authors: book.authors
+    .map((author) => author.name)
+    .filter((name): name is string => Boolean(name)),
+  sourceLabel: "Project Gutenberg",
+  description: describeBook(book),
+  textUrl: pickTextUrl(book.formats) ?? buildFallbackTextUrl(book.id) ?? undefined,
+});
+
+const normalizeSearch = (value?: string) =>
+  (value ?? "").trim().replace(/\s+/g, " ").slice(0, 120);
+
+const matchesSearch = (book: BookSummary, search: string) => {
+  if (!search) {
+    return true;
+  }
+  const needle = search.toLowerCase();
+  if (book.title.toLowerCase().includes(needle)) {
+    return true;
+  }
+  return book.authors.some((author) => author.toLowerCase().includes(needle));
+};
+
+const fallbackPage = (page: number, search: string): CatalogPage => {
+  const filtered = FALLBACK_CATALOG.filter((book) => matchesSearch(book, search));
+  const start = (page - 1) * PAGE_SIZE;
+  const slice = filtered.slice(start, start + PAGE_SIZE);
+  const hasMore = start + slice.length < filtered.length;
+  return {
+    books: slice.map((book) => ({ ...book })),
+    page,
+    count: filtered.length,
+    nextPage: hasMore ? page + 1 : null,
+    search,
+  };
+};
+
 export class ProjectGutenbergBookSource implements BookSource {
   label = "Project Gutenberg";
 
-  private catalogCache?: CacheEntry<BookSummary[]>;
-  private catalogPromise?: Promise<BookSummary[]>;
+  private catalogCache = new Map<string, CacheEntry<CatalogPage>>();
+  private catalogPromises = new Map<string, Promise<CatalogPage>>();
 
   private textCache = new Map<string, CacheEntry<string>>();
   private textPromises = new Map<string, Promise<string>>();
 
-  async listBooks(options?: { forceReload?: boolean }): Promise<BookSummary[]> {
+  async listBooks(options?: ListBooksOptions): Promise<CatalogPage> {
+    const page = Math.max(1, options?.page ?? 1);
+    const search = normalizeSearch(options?.search);
+    const cacheKey = `p=${page}:q=${search.toLowerCase()}`;
     const shouldBypassCache = options?.forceReload ?? false;
-    if (!shouldBypassCache && isCacheFresh(this.catalogCache)) {
-      return this.catalogCache!.value;
+
+    if (!shouldBypassCache) {
+      const cached = this.catalogCache.get(cacheKey);
+      if (isCacheFresh(cached)) {
+        return cached!.value;
+      }
     }
 
-    if (this.catalogPromise) {
-      return this.catalogPromise;
+    const pending = this.catalogPromises.get(cacheKey);
+    if (pending) {
+      return pending;
     }
 
-    this.catalogPromise = this.fetchCatalog().finally(() => {
-      this.catalogPromise = undefined;
-    });
+    const promise = this.fetchCatalogPage(page, search)
+      .then((result) => {
+        this.catalogCache.set(cacheKey, {
+          value: result,
+          expiresAt: Date.now() + CATALOG_CACHE_TTL,
+        });
+        return result;
+      })
+      .finally(() => {
+        this.catalogPromises.delete(cacheKey);
+      });
 
-    return this.catalogPromise;
+    this.catalogPromises.set(cacheKey, promise);
+    return promise;
   }
 
   async fetchBookText(book: BookSummary): Promise<string> {
@@ -131,20 +206,16 @@ export class ProjectGutenbergBookSource implements BookSource {
     return promise;
   }
 
-  private cacheCatalog(books: BookSummary[]) {
-    this.catalogCache = {
-      value: books,
-      expiresAt: Date.now() + CATALOG_CACHE_TTL,
-    };
-    return books;
-  }
-
-  private async fetchCatalog(): Promise<BookSummary[]> {
+  private async fetchCatalogPage(page: number, search: string): Promise<CatalogPage> {
     try {
       const url = new URL(GUTENDEX_ENDPOINT);
       url.searchParams.set("languages", "en");
       url.searchParams.set("mime_type", "text/plain");
       url.searchParams.set("sort", "downloads");
+      url.searchParams.set("page", String(page));
+      if (search) {
+        url.searchParams.set("search", search);
+      }
 
       const response = await fetchWithTimeout(url, CATALOG_FETCH_TIMEOUT_MS, {
         headers: { "User-Agent": USER_AGENT, Accept: "application/json" },
@@ -154,39 +225,31 @@ export class ProjectGutenbergBookSource implements BookSource {
       }
 
       const payload = (await response.json()) as GutendexResponse;
-      if (!Array.isArray(payload?.results) || payload.results.length === 0) {
-        throw new Error("Gutendex returned an empty catalog.");
+      if (!Array.isArray(payload?.results)) {
+        throw new Error("Gutendex returned an invalid catalog.");
       }
 
-      return this.cacheCatalog(
-        payload.results.slice(0, 12).map((book) => ({
-          id: String(book.id),
-          title: book.title,
-          authors: book.authors
-            .map((author) => author.name)
-            .filter((name): name is string => Boolean(name)),
-          sourceLabel: this.label,
-          description: describeBook(book),
-          metadata: book,
-          textUrl: pickTextUrl(book.formats) ?? buildFallbackTextUrl(book) ?? undefined,
-        })),
-      );
+      return {
+        books: payload.results.map(toBookSummary),
+        page,
+        count: typeof payload.count === "number" ? payload.count : payload.results.length,
+        nextPage: payload.next ? page + 1 : null,
+        search,
+      };
     } catch (error) {
-      console.warn(
-        "[catalog] Gutendex unavailable, using curated fallback:",
-        error instanceof Error ? error.message : error,
-      );
-      return this.cacheCatalog(FALLBACK_CATALOG.map((book) => ({ ...book })));
+      if (page === 1) {
+        console.warn(
+          "[catalog] Gutendex unavailable, using curated fallback:",
+          error instanceof Error ? error.message : error,
+        );
+        return fallbackPage(page, search);
+      }
+      throw error instanceof Error ? error : new Error("Unable to load more books.");
     }
   }
 
   private async fetchText(book: BookSummary): Promise<string> {
-    const textUrl = book.textUrl ?? buildFallbackTextUrl(book.metadata) ?? buildFallbackTextUrl({
-      id: Number(book.id),
-      title: book.title,
-      authors: [],
-      formats: {},
-    });
+    const textUrl = book.textUrl ?? buildFallbackTextUrl(book.id);
     if (!textUrl) {
       throw new Error("Could not determine a text version for this book.");
     }
@@ -247,6 +310,14 @@ const createError = async (response: Response, fallback: string) => {
   return new Error(detail);
 };
 
+const isCatalogPage = (value: unknown): value is CatalogPage => {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return Array.isArray(record.books);
+};
+
 export class ApiBookSource implements BookSource {
   label = "Project Gutenberg";
 
@@ -266,32 +337,70 @@ export class ApiBookSource implements BookSource {
     return payload as T;
   }
 
-  async listBooks(options?: { forceReload?: boolean }): Promise<BookSummary[]> {
-    const query = options?.forceReload ? "?force=true" : "";
+  async listBooks(options?: ListBooksOptions): Promise<CatalogPage> {
+    const page = Math.max(1, options?.page ?? 1);
+    const search = normalizeSearch(options?.search);
+    const params = new URLSearchParams();
+    params.set("page", String(page));
+    if (search) {
+      params.set("search", search);
+    }
+    if (options?.forceReload) {
+      params.set("force", "true");
+    }
+
     try {
-      const payload = await this.fetchJson<BookSummary[] | { error?: string }>(
-        `/api/gutenberg-books${query}`,
+      const payload = await this.fetchJson<CatalogPage | BookSummary[] | { error?: string }>(
+        `/api/gutenberg-books?${params.toString()}`,
       );
-      if (Array.isArray(payload) && payload.length > 0) {
-        return payload;
+
+      if (isCatalogPage(payload)) {
+        return {
+          books: payload.books,
+          page: typeof payload.page === "number" ? payload.page : page,
+          count: typeof payload.count === "number" ? payload.count : payload.books.length,
+          nextPage:
+            payload.nextPage === null || typeof payload.nextPage === "number"
+              ? payload.nextPage
+              : null,
+          search: typeof payload.search === "string" ? payload.search : search,
+        };
       }
+
+      // Legacy array response (older API) — treat as a single page.
+      if (Array.isArray(payload) && payload.length > 0) {
+        return {
+          books: payload,
+          page: 1,
+          count: payload.length,
+          nextPage: null,
+          search,
+        };
+      }
+
       if (payload && typeof payload === "object" && "error" in payload && payload.error) {
         throw new Error(String(payload.error));
       }
       throw new Error("Catalog response was empty.");
     } catch (error) {
-      console.warn(
-        "[catalog] API catalog failed, using curated fallback:",
-        error instanceof Error ? error.message : error,
-      );
-      return FALLBACK_CATALOG.map((book) => ({ ...book }));
+      if (page === 1) {
+        console.warn(
+          "[catalog] API catalog failed, using curated fallback:",
+          error instanceof Error ? error.message : error,
+        );
+        return fallbackPage(page, search);
+      }
+      throw error instanceof Error ? error : new Error("Unable to load more books.");
     }
   }
 
   async fetchBookText(book: BookSummary): Promise<string> {
     const response = await fetchWithTimeout("/api/book-text", TEXT_FETCH_TIMEOUT_MS, {
       method: "POST",
-      body: JSON.stringify(book),
+      body: JSON.stringify({
+        id: book.id,
+        textUrl: book.textUrl,
+      }),
       headers: { "Content-Type": "application/json" },
     });
 

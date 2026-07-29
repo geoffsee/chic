@@ -10,7 +10,8 @@ Live at [chic.geoffsee.com](https://chic.geoffsee.com).
 
 ## Features
 
-- Browse and open plain-text books from Project Gutenberg (via [Gutendex](https://gutendex.com/))
+- Browse Project Gutenberg books through the app API (paginated, lean catalog payloads)
+- Infinite-scroll library with title/author search
 - Read along with word-level highlighting while audio plays
 - Two speech engines:
   - **Browser** — `speechSynthesis` (works offline after the book is loaded)
@@ -25,7 +26,7 @@ Live at [chic.geoffsee.com](https://chic.geoffsee.com).
 | UI | React 19, Chakra UI |
 | Local server | Bun (`src/index.tsx`, port 4000) |
 | Production | Cloudflare Workers + static assets |
-| Catalog / text | Gutendex + Gutenberg plain text |
+| Catalog / text | API-ingested Gutendex catalog + Gutenberg plain text |
 | TTS | Workers AI `@cf/deepgram/aura-2-en` |
 | Cache | Cloudflare KV (`GUTENBERG_KV`) |
 
@@ -56,7 +57,7 @@ Shared handlers live under `functions/api/` and are wired for both Bun (dev) and
 
 | Route | Method | Purpose |
 | --- | --- | --- |
-| `/api/gutenberg-books` | `GET` | Book catalog (`?force=true` to bypass cache) |
+| `/api/gutenberg-books` | `GET` | Paginated catalog (`?page=1&search=dickens&force=true`) |
 | `/api/book-text` | `POST` | Fetch prepared plain text for a book summary |
 | `/api/tts` | `GET` / `POST` | Cloud TTS (Aura-2); requires AI binding in production |
 | `/api/word-info` | `GET` / `POST` | Dictionary definition for a word (+ optional context) |
