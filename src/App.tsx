@@ -21,6 +21,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { useIncrementalBookText } from "./hooks/useIncrementalBookText";
+import { isLocale, useI18n } from "./i18n";
 import { ApiBookSource, BookSummary } from "./services/bookService";
 import {
   loadReadingProgress,
@@ -73,8 +74,6 @@ const segmentText = (text: string): TextSegment[] => {
   return segments.length ? segments : [{ text, start: 0, end: text.length, isWord: false }];
 };
 
-const FALLBACK_TEXT = "Select a book from the right to stream its text.";
-
 type InfoAnchor = {
   top: number;
   left: number;
@@ -88,6 +87,10 @@ type InfoState = {
   message: string;
   word: string;
   anchor: InfoAnchor | null;
+  image: string | null;
+  imageStatus: "idle" | "loading" | "ready" | "skipped" | "error";
+  definition?: string;
+  partOfSpeech?: string;
 };
 
 const findWordIndexFromChar = (wordSegments: TextSegment[], charIndex: number) => {
@@ -155,6 +158,7 @@ const buildSentenceContext = (text: string, charIndex: number, radius = 220) => 
 };
 
 export function App() {
+  const { t, locale, setLocale, locales } = useI18n();
   const bookSource = useMemo(() => new ApiBookSource(), []);
   const [books, setBooks] = useState<BookSummary[]>([]);
   const [selectedBook, setSelectedBook] = useState<BookSummary | null>(null);
@@ -193,16 +197,19 @@ export function App() {
     message: "",
     word: "",
     anchor: null,
+    image: null,
+    imageStatus: "idle",
   });
   const positionTimeoutRef = useRef<number | null>(null);
   const pendingWordIndexRef = useRef<number | null>(null);
   const skipAutoUpdateRef = useRef(false);
   const activeWordIndexRef = useRef(0);
   const infoAbortRef = useRef<AbortController | null>(null);
+  const imageAbortRef = useRef<AbortController | null>(null);
   const wordRefs = useRef<(HTMLSpanElement | null)[]>([]);
   const currentWordRef = useRef<HTMLSpanElement | null>(null);
 
-  const renderedText = bookText || FALLBACK_TEXT;
+  const renderedText = bookText || t("reader.fallbackText");
   const segments = useMemo(() => segmentText(renderedText), [renderedText]);
   const wordSegments = useMemo(() => segments.filter((segment) => segment.isWord), [segments]);
 
@@ -259,7 +266,9 @@ export function App() {
 
         if (isFirstPage) {
           if (fetchedBooks.length === 0) {
-            setListError(search ? `No books match “${search}”.` : "No books available right now.");
+            setListError(
+              search ? t("library.noMatch", { search }) : t("library.noneAvailable"),
+            );
             setBooks([]);
             return;
           }
@@ -279,11 +288,11 @@ export function App() {
           return;
         }
         if (isFirstPage) {
-          setListError(error?.message ?? "Unable to load the catalog.");
+          setListError(error?.message ?? t("library.loadFailed"));
           setBooks([]);
           setNextPage(null);
         } else {
-          setListError(error?.message ?? "Unable to load more books.");
+          setListError(error?.message ?? t("library.loadMoreFailed"));
         }
       })
       .finally(() => {
@@ -300,7 +309,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [bookSource, catalogQuery]);
+  }, [bookSource, catalogQuery, t]);
 
   useEffect(() => {
     // Re-read on mount in case another tab wrote progress.
@@ -310,6 +319,7 @@ export function App() {
   useEffect(() => {
     return () => {
       infoAbortRef.current?.abort();
+      imageAbortRef.current?.abort();
       if (positionTimeoutRef.current) {
         window.clearTimeout(positionTimeoutRef.current);
       }
@@ -376,11 +386,9 @@ export function App() {
         wordIndex: currentIndex,
       });
       setSessionPositions(store.positions);
-      setProgressWarning(
-        persisted ? null : "Progress is only kept for this visit — browser storage is unavailable.",
-      );
+      setProgressWarning(persisted ? null : t("reader.progressSessionOnly"));
     },
-    [selectedBook, wordSegments],
+    [selectedBook, t, wordSegments],
   );
 
   const schedulePositionUpdate = useCallback(
@@ -497,6 +505,7 @@ export function App() {
     };
 
     infoAbortRef.current?.abort();
+    imageAbortRef.current?.abort();
     const controller = new AbortController();
     infoAbortRef.current = controller;
 
@@ -506,12 +515,15 @@ export function App() {
       message: "",
       word,
       anchor,
+      image: null,
+      imageStatus: "idle",
     });
 
     const charIndex = wordSegments[activeWordIndex]?.start ?? 0;
     const payload = {
       word,
       context: buildSentenceContext(bookText, charIndex),
+      locale,
     };
 
     fetch("/api/word-info", {
@@ -523,18 +535,78 @@ export function App() {
       .then(async (response) => {
         if (!response.ok) {
           const data = await response.json().catch(() => null);
-          throw new Error(data?.error ?? "Look-up failed.");
+          throw new Error(data?.error ?? t("wordHelp.lookupFailed"));
         }
         return response.json();
       })
       .then((body) => {
+        if (controller.signal.aborted) {
+          return;
+        }
+        const definition = typeof body?.definition === "string" ? body.definition : undefined;
+        const partOfSpeech =
+          typeof body?.partOfSpeech === "string" ? body.partOfSpeech : undefined;
+
         setInfoState({
           open: true,
           status: "ready",
-          message: body?.explanation ?? "No explanation available.",
+          message: body?.explanation ?? t("wordHelp.noExplanation"),
           word,
           anchor,
+          image: null,
+          imageStatus: "loading",
+          definition,
+          partOfSpeech,
         });
+
+        imageAbortRef.current?.abort();
+        const imageController = new AbortController();
+        imageAbortRef.current = imageController;
+
+        fetch("/api/word-image", {
+          method: "POST",
+          signal: imageController.signal,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ word, definition, partOfSpeech }),
+        })
+          .then(async (response) => {
+            if (!response.ok) {
+              return { image: null, status: "error" as const };
+            }
+            return response.json();
+          })
+          .then((imageBody) => {
+            if (imageController.signal.aborted) {
+              return;
+            }
+            const status =
+              imageBody?.status === "ready" ||
+              imageBody?.status === "skipped" ||
+              imageBody?.status === "error"
+                ? imageBody.status
+                : imageBody?.image
+                  ? "ready"
+                  : "error";
+            setInfoState((previous) =>
+              previous.word === word && previous.open
+                ? {
+                    ...previous,
+                    image: typeof imageBody?.image === "string" ? imageBody.image : null,
+                    imageStatus: status,
+                  }
+                : previous,
+            );
+          })
+          .catch(() => {
+            if (imageController.signal.aborted) {
+              return;
+            }
+            setInfoState((previous) =>
+              previous.word === word && previous.open
+                ? { ...previous, image: null, imageStatus: "error" }
+                : previous,
+            );
+          });
       })
       .catch((error) => {
         if (controller.signal.aborted) {
@@ -543,12 +615,14 @@ export function App() {
         setInfoState({
           open: true,
           status: "error",
-          message: error instanceof Error ? error.message : "Unable to load the word help.",
+          message: error instanceof Error ? error.message : t("wordHelp.loadFailed"),
           word,
           anchor,
+          image: null,
+          imageStatus: "error",
         });
       });
-  }, [activeWordIndex, bookText, wordSegments]);
+  }, [activeWordIndex, bookText, locale, t, wordSegments]);
 
   const handlePlayerHighlight = useCallback(
     (charIndex: number, _source: HighlightSource) => {
@@ -660,16 +734,16 @@ export function App() {
   const atEnd = activeWordIndex >= wordSegments.length - 1;
   const isBuffering = speechSnapshot.phase === "loading" || speechSnapshot.phase === "buffering";
   const playLabel = !voicesReady
-    ? "Getting ready…"
+    ? t("controls.gettingReady")
     : loadingText
-      ? "Loading book…"
+      ? t("controls.loadingBook")
       : isSpeaking && isPaused
-        ? "Resume"
+        ? t("controls.resume")
         : isSpeaking
           ? phaseLabel(speechSnapshot.phase, false)
           : speechSnapshot.phase === "error"
-            ? "Try again"
-            : "Play";
+            ? t("controls.tryAgain")
+            : t("controls.play");
 
   // While buffering, keep Play disabled so a second click doesn’t restart by surprise.
   // While errored, Play is enabled as “Try again”.
@@ -689,7 +763,7 @@ export function App() {
     <VStack align="flex-start" gap="0.55rem">
       <HStack
         role="group"
-        aria-label="Reader controls"
+        aria-label={t("controls.aria")}
         gap="0.65rem"
         p="0.3rem"
         borderRadius="pill"
@@ -729,7 +803,7 @@ export function App() {
           <Box as="span" aria-hidden="true">
             ❚❚
           </Box>
-          <span>Pause</span>
+          <span>{t("controls.pause")}</span>
         </Button>
         <Button
           type="button"
@@ -737,8 +811,8 @@ export function App() {
           px="0.75rem"
           onClick={() => moveWord(-1)}
           disabled={atStart || (isSpeaking && !isPaused)}
-          aria-label="Move to the previous word"
-          title={isSpeaking && !isPaused ? "Pause reading to move by word" : undefined}
+          aria-label={t("controls.prevWordAria")}
+          title={isSpeaking && !isPaused ? t("controls.pauseToMove") : undefined}
           borderColor="border.strong"
           bg="rgba(255, 255, 255, 0.06)"
           color="ink"
@@ -747,7 +821,7 @@ export function App() {
           <Box as="span" aria-hidden="true">
             ◀︎
           </Box>
-          <span>Word</span>
+          <span>{t("controls.word")}</span>
         </Button>
         <Button
           type="button"
@@ -755,8 +829,8 @@ export function App() {
           px="0.75rem"
           onClick={() => moveWord(1)}
           disabled={atEnd || (isSpeaking && !isPaused)}
-          aria-label="Move to the next word"
-          title={isSpeaking && !isPaused ? "Pause reading to move by word" : undefined}
+          aria-label={t("controls.nextWordAria")}
+          title={isSpeaking && !isPaused ? t("controls.pauseToMove") : undefined}
           borderColor="border.strong"
           bg="rgba(255, 255, 255, 0.06)"
           color="ink"
@@ -765,7 +839,7 @@ export function App() {
           <Box as="span" aria-hidden="true">
             ▶︎
           </Box>
-          <span>Word</span>
+          <span>{t("controls.word")}</span>
         </Button>
       </HStack>
 
@@ -774,7 +848,7 @@ export function App() {
           {cloudTtsReady && speechSnapshot.browserAvailable ? (
             <HStack
               role="group"
-              aria-label="Voice type"
+              aria-label={t("controls.voiceTypeAria")}
               p="0.2rem"
               borderRadius="pill"
               borderWidth="1px"
@@ -794,7 +868,7 @@ export function App() {
                 color="ink"
                 _disabled={{ opacity: 0.35, cursor: "not-allowed" }}
               >
-                Natural
+                {t("controls.natural")}
               </Button>
               <Button
                 type="button"
@@ -808,14 +882,14 @@ export function App() {
                 color="ink"
                 _disabled={{ opacity: 0.35, cursor: "not-allowed" }}
               >
-                Device
+                {t("controls.device")}
               </Button>
             </HStack>
           ) : null}
           {cloudTtsReady && speechBackend === "cloud" ? (
             <HStack as="label" gap="0.5rem" fontSize="0.85rem" color="muted">
               <Text as="span" opacity={0.85}>
-                Speaker
+                {t("controls.speaker")}
               </Text>
               <Box
                 as="select"
@@ -897,7 +971,7 @@ export function App() {
                   color="ink"
                   onClick={() => speechControls.retry()}
                 >
-                  Try again
+                  {t("controls.tryAgain")}
                 </Button>
               ) : null}
               {speechNotice.actions.includes("use-device-voice") ? (
@@ -910,7 +984,7 @@ export function App() {
                   color="ink"
                   onClick={() => speechControls.useDeviceVoiceAndContinue()}
                 >
-                  Use device voice
+                  {t("controls.useDeviceVoice")}
                 </Button>
               ) : null}
               {speechNotice.actions.includes("dismiss") ? (
@@ -924,7 +998,7 @@ export function App() {
                   textUnderlineOffset="2px"
                   onClick={() => speechControls.dismissNotice()}
                 >
-                  Dismiss
+                  {t("controls.dismiss")}
                 </Button>
               ) : null}
             </Flex>
@@ -973,7 +1047,7 @@ export function App() {
                   textTransform="uppercase"
                   color="fg.accent"
                 >
-                  Now reading
+                  {t("reader.nowReading")}
                 </Text>
                 <Heading
                   as="h2"
@@ -983,11 +1057,11 @@ export function App() {
                   fontWeight="semibold"
                   color="ink"
                 >
-                  {selectedBook ? selectedBook.title : "Choose a book to begin"}
+                  {selectedBook ? selectedBook.title : t("reader.chooseBook")}
                 </Heading>
                 {selectedBook && (
                   <Text m="0" fontSize="0.9rem" color="muted">
-                    {selectedBook.authors.join(", ") || "Unknown author"} ·{" "}
+                    {selectedBook.authors.join(", ") || t("reader.unknownAuthor")} ·{" "}
                     {selectedBook.sourceLabel}
                   </Text>
                 )}
@@ -1024,7 +1098,7 @@ export function App() {
             >
               {loadingText ? (
                 <Text m="0" fontSize="0.95rem" color="muted">
-                  Loading book text…
+                  {t("reader.loadingText")}
                 </Text>
               ) : (
                 <Box
@@ -1068,7 +1142,7 @@ export function App() {
                   })()}
                   {loadingMoreText ? (
                     <Text as="span" display="block" mt="1rem" fontSize="0.9rem" color="muted">
-                      Loading more…
+                      {t("reader.loadingMore")}
                     </Text>
                   ) : null}
                   {!loadingMoreText && hasMoreText ? (
@@ -1081,7 +1155,7 @@ export function App() {
                         color="muted"
                         _hover={{ color: "ink" }}
                       >
-                        Load more text
+                        {t("reader.loadMoreText")}
                       </Button>
                     </Box>
                   ) : null}
@@ -1112,7 +1186,7 @@ export function App() {
                 <Box as="span" aria-hidden="true">
                   ℹ︎
                 </Box>
-                <span>Word help</span>
+                <span>{t("wordHelp.button")}</span>
               </Button>
               {progressWarning ? (
                 <Text m="0" fontSize="0.85rem" color="muted" role="status">
@@ -1147,7 +1221,7 @@ export function App() {
                 textTransform="uppercase"
                 color="fg.accent"
               >
-                Library
+                {t("library.title")}
               </Text>
               <Heading
                 as="h3"
@@ -1157,22 +1231,51 @@ export function App() {
                 fontWeight="semibold"
                 color="ink"
               >
-                Project Gutenberg
+                {t("library.subtitle")}
               </Heading>
             </Box>
-            <Button
-              type="button"
-              size="sm"
-              onClick={refreshCatalog}
-              bg="rgba(255, 255, 255, 0.06)"
-              borderWidth="1px"
-              borderColor="border.strong"
-              borderRadius="control"
-              color="ink"
-              _hover={{ transform: "translateY(-1px)", bg: "panel.raisedHover" }}
-            >
-              Refresh
-            </Button>
+            <HStack gap="0.5rem">
+              <Box
+                as="select"
+                aria-label={t("locale.aria")}
+                value={locale}
+                onChange={(event: ChangeEvent<HTMLSelectElement>) => {
+                  if (isLocale(event.target.value)) {
+                    setLocale(event.target.value);
+                  }
+                }}
+                appearance="none"
+                borderWidth="1px"
+                borderColor="border.strong"
+                bg="rgba(255, 255, 255, 0.06)"
+                color="ink"
+                borderRadius="control"
+                px="0.65rem"
+                py="0.35rem"
+                font="inherit"
+                fontSize="0.8rem"
+                cursor="pointer"
+              >
+                {locales.map((entry) => (
+                  <option key={entry.id} value={entry.id}>
+                    {entry.name}
+                  </option>
+                ))}
+              </Box>
+              <Button
+                type="button"
+                size="sm"
+                onClick={refreshCatalog}
+                bg="rgba(255, 255, 255, 0.06)"
+                borderWidth="1px"
+                borderColor="border.strong"
+                borderRadius="control"
+                color="ink"
+                _hover={{ transform: "translateY(-1px)", bg: "panel.raisedHover" }}
+              >
+                {t("library.refresh")}
+              </Button>
+            </HStack>
           </Flex>
 
           <Box>
@@ -1182,8 +1285,8 @@ export function App() {
               onChange={(event: ChangeEvent<HTMLInputElement>) =>
                 setSearchInput(event.target.value)
               }
-              placeholder="Search title or author…"
-              aria-label="Search books by title or author"
+              placeholder={t("library.searchPlaceholder")}
+              aria-label={t("library.searchAria")}
               size="md"
               borderRadius="control"
               borderWidth="1px"
@@ -1199,8 +1302,12 @@ export function App() {
             />
             {!loadingBooks && catalogCount > 0 ? (
               <Text m="0.45rem 0 0" fontSize="0.8rem" color="muted">
-                {catalogCount.toLocaleString()} book{catalogCount === 1 ? "" : "s"}
-                {catalogQuery.search ? ` matching “${catalogQuery.search}”` : ""}
+                {t(catalogCount === 1 ? "library.bookCount" : "library.bookCountPlural", {
+                  count: catalogCount.toLocaleString(),
+                })}
+                {catalogQuery.search
+                  ? t("library.matching", { search: catalogQuery.search })
+                  : ""}
               </Text>
             ) : null}
           </Box>
@@ -1212,7 +1319,7 @@ export function App() {
           ) : null}
           {loadingBooks ? (
             <Text m="0" fontSize="0.95rem" color="muted">
-              Loading books…
+              {t("library.loading")}
             </Text>
           ) : (
             <VStack
@@ -1260,7 +1367,7 @@ export function App() {
                       {book.title}
                     </Text>
                     <Text m="0" fontSize="0.9rem" color="muted">
-                      {book.authors.length ? book.authors.join(", ") : "Unknown author"}
+                      {book.authors.length ? book.authors.join(", ") : t("reader.unknownAuthor")}
                     </Text>
                     {book.description ? (
                       <Text m="0.35rem 0 0" fontSize="0.85rem" color="muted">
@@ -1272,7 +1379,7 @@ export function App() {
               })}
               {loadingMoreBooks ? (
                 <Text as="li" m="0" p="0.5rem 0" fontSize="0.9rem" color="muted" textAlign="center">
-                  Loading more…
+                  {t("library.loadingMore")}
                 </Text>
               ) : null}
               {!loadingMoreBooks && nextPage != null ? (
@@ -1286,7 +1393,7 @@ export function App() {
                     color="muted"
                     _hover={{ color: "ink", bg: "rgba(255, 255, 255, 0.04)" }}
                   >
-                    Load more
+                    {t("library.loadMore")}
                   </Button>
                 </Box>
               ) : null}
@@ -1299,7 +1406,7 @@ export function App() {
                   color="muted"
                   textAlign="center"
                 >
-                  End of results
+                  {t("library.endOfResults")}
                 </Text>
               ) : null}
             </VStack>
@@ -1346,13 +1453,33 @@ export function App() {
           role="status"
           aria-live={infoState.status === "loading" ? "polite" : "assertive"}
         >
-          <Box>
+          <Box flex="1" minW="0">
             <Text as="strong" fontSize="0.95rem" letterSpacing="0.05em">
               {infoState.word}
             </Text>
             <Text m="0.25rem 0 0" fontSize="0.9rem" color="muted">
-              {infoState.status === "loading" ? "Looking up the definition…" : infoState.message}
+              {infoState.status === "loading" ? t("wordHelp.loading") : infoState.message}
             </Text>
+            {infoState.status === "ready" && infoState.imageStatus === "loading" ? (
+              <Text m="0.4rem 0 0" fontSize="0.8rem" color="muted" opacity={0.85}>
+                {t("wordHelp.drawing")}
+              </Text>
+            ) : null}
+            {infoState.image ? (
+              <Box
+                as="img"
+                src={infoState.image}
+                alt={t("wordHelp.imageAlt", { word: infoState.word })}
+                mt="0.55rem"
+                maxW="100%"
+                w="100%"
+                maxH="180px"
+                objectFit="cover"
+                borderRadius="12px"
+                borderWidth="1px"
+                borderColor="border.subtle"
+              />
+            ) : null}
           </Box>
           <Button
             type="button"
@@ -1364,8 +1491,11 @@ export function App() {
             color="muted"
             fontSize="1.3rem"
             lineHeight="1"
-            aria-label="Close word help"
-            onClick={() => setInfoState((previous) => ({ ...previous, open: false }))}
+            aria-label={t("wordHelp.closeAria")}
+            onClick={() => {
+              imageAbortRef.current?.abort();
+              setInfoState((previous) => ({ ...previous, open: false }));
+            }}
           >
             ×
           </Button>

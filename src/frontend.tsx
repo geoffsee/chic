@@ -9,12 +9,15 @@ import { createRoot } from "react-dom/client";
 import { StrictMode } from "react";
 import { App } from "./App";
 import { Provider } from "./components/ui/provider";
+import { I18nProvider } from "./i18n";
 
 const elem = document.getElementById("root")!;
 const app = (
   <StrictMode>
     <Provider>
-      <App />
+      <I18nProvider>
+        <App />
+      </I18nProvider>
     </Provider>
   </StrictMode>
 );

@@ -17,7 +17,8 @@ Live at [chic.geoffsee.com](https://chic.geoffsee.com).
 - Two speech engines:
   - **Browser** — `speechSynthesis` (works offline after the book is loaded)
   - **Cloud** — Cloudflare Workers AI / Deepgram Aura-2 (natural multi-speaker English voices)
-- Tap a word for a short definition (Free Dictionary API, cached in KV)
+- Tap a word for short help: Free Dictionary definition (localized via Workers AI when the UI locale is not English), then an optional AI illustration (FLUX, cached in KV)
+- App chrome is internationalized (English catalog + language switcher; more locales are drop-in message files)
 - Resume where you left off (progress stored in the browser)
 
 ## Stack
@@ -29,7 +30,9 @@ Live at [chic.geoffsee.com](https://chic.geoffsee.com).
 | Production | Cloudflare Workers + static assets |
 | Catalog / text | API-ingested Gutendex catalog + Gutenberg plain text |
 | TTS | Workers AI `@cf/deepgram/aura-2-en` |
+| Word help | Free Dictionary API + optional Llama rewrite + FLUX.1 schnell illustration |
 | Cache | Cloudflare KV (`GUTENBERG_KV`) |
+| i18n | Lightweight catalogs in `src/i18n/` (app chrome only; book text stays original) |
 
 ## Quick start
 
@@ -61,7 +64,8 @@ Shared handlers live under `functions/api/` and are wired for both Bun (dev) and
 | `/api/gutenberg-books` | `GET` | Paginated catalog (`?page=1&search=dickens&force=true`) |
 | `/api/book-text` | `POST` | Ingest book into KV; return one text page (`{ id, textUrl?, page }`) |
 | `/api/tts` | `GET` / `POST` | Cloud TTS (Aura-2); requires AI binding in production |
-| `/api/word-info` | `GET` / `POST` | Dictionary definition for a word (+ optional context) |
+| `/api/word-info` | `POST` | Dictionary definition (+ optional context, `locale`); AI rewrite when locale ≠ `en` |
+| `/api/word-image` | `POST` | AI illustration for a word (FLUX.1 schnell); cached; fail-open if AI missing |
 
 ## Deploy
 
@@ -75,16 +79,25 @@ Shared handlers live under `functions/api/` and are wired for both Bun (dev) and
 bun run deploy
 ```
 
-Cloud TTS needs the Workers AI binding. Without it, the app still works with the browser speech engine.
+Cloud TTS, word-help localization, and word illustrations need the Workers AI binding. Without it, the app still works with the browser speech engine and English dictionary text (images are skipped).
+
+### Internationalization
+
+- UI strings live in `src/i18n/locales/` (one file per language code).
+- Language switcher is in the library header; choice persists in `localStorage` (`chic.locale`).
+- **Book text is never translated.** Word-help definitions are looked up in English and rewritten into the UI locale when AI is available.
+- **34 locales** ship today: `en`, `es`, `fr`, `de`, `it`, `pt`, `nl`, `pl`, `ru`, `uk`, `zh`, `ja`, `ko`, `ar`, `hi`, `tr`, `vi`, `th`, `id`, `sv`, `da`, `no`, `fi`, `cs`, `ro`, `hu`, `el`, `he`, `bn`, `sw`, `ca`, `ms`, `bg`, `fa` (aliases: `nb`/`nn` → `no`, `cmn`/`yue` → `zh`).
+- To add a locale: create `src/i18n/locales/<code>.ts` (`Messages`), register it in `catalogs.ts`, and extend the `Locale` type.
 
 ## Project layout
 
 ```
 src/                 React app, speech player, book services/hooks
+src/i18n/            Message catalogs + I18nProvider
 src/services/        Catalog + chunked book-text helpers (ingest, chunk, types)
-functions/api/       Worker/Bun API handlers (books, text, TTS, word info)
+functions/api/       Worker/Bun API handlers (books, text, TTS, word info/image)
 index.ts             Cloudflare Worker entry (routes + assets)
-tests/               Bun test suites for speech, TTS, catalog, chunked text
+tests/               Bun test suites for speech, TTS, catalog, chunked text, i18n
 example.wrangler.toml  Deploy config template
 ```
 

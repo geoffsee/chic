@@ -1,15 +1,19 @@
-type KVNamespace = {
-  get(key: string): Promise<string | null>;
-  put(key: string, value: string, options?: { expirationTtl?: number }): Promise<void>;
-};
-
-type Env = {
-  GUTENBERG_KV: KVNamespace;
-};
+import {
+  TEXT_MODEL,
+  WORD_INFO_TTL,
+  capitalize,
+  extractAiText,
+  normalizeWord,
+  primaryLocale,
+  readProcessEnv,
+  wordInfoCacheKey,
+  type WordHelpEnv,
+} from "./wordHelpShared";
 
 type WordInfoPayload = {
   word: string;
   context?: string;
+  locale?: string;
 };
 
 type CachedDefinition = {
@@ -19,15 +23,12 @@ type CachedDefinition = {
   partOfSpeech?: string;
   source: string;
   updatedAt: number;
+  /** Localized explanation for the cache key's locale */
+  explanation?: string;
+  locale?: string;
 };
 
-const WORD_INFO_TTL = 60 * 5; // 5 minutes
 const DICTIONARY_API = "https://api.dictionaryapi.dev/api/v2/entries/en";
-
-const normalizeWord = (value: string) => value.trim().toLowerCase();
-
-const capitalize = (value: string) =>
-  value ? value.charAt(0).toUpperCase() + value.slice(1) : value;
 
 const buildExplanation = (payloadWord: string, entry: CachedDefinition, context?: string) => {
   const parts: string[] = [];
@@ -56,7 +57,7 @@ const ensurePayload = (value: unknown): value is WordInfoPayload =>
   value !== null &&
   typeof (value as WordInfoPayload).word === "string";
 
-const fetchDefinition = async (word: string) => {
+const fetchDefinition = async (word: string): Promise<CachedDefinition> => {
   const response = await fetch(`${DICTIONARY_API}/${encodeURIComponent(word)}`);
   if (!response.ok) {
     throw new Error("Dictionary lookup failed.");
@@ -80,24 +81,104 @@ const fetchDefinition = async (word: string) => {
     partOfSpeech,
     source: "dictionaryapi.dev",
     updatedAt: Date.now(),
-  } satisfies CachedDefinition;
+  };
+};
+
+const runTextModel = async (env: WordHelpEnv, prompt: string): Promise<string | null> => {
+  const messages = [
+    {
+      role: "system",
+      content:
+        "You rewrite short dictionary explanations for language learners. Output only the rewritten explanation in the target language. No markdown, no preface, no quotes around the whole answer.",
+    },
+    { role: "user", content: prompt },
+  ];
+
+  if (env.AI) {
+    try {
+      const result = await env.AI.run(TEXT_MODEL, { messages });
+      return extractAiText(result);
+    } catch {
+      return null;
+    }
+  }
+
+  const accountId = env.CLOUDFLARE_ACCOUNT_ID ?? readProcessEnv("CLOUDFLARE_ACCOUNT_ID");
+  const token = env.CLOUDFLARE_API_TOKEN ?? readProcessEnv("CLOUDFLARE_API_TOKEN");
+  if (!accountId || !token) {
+    return null;
+  }
+
+  try {
+    const response = await fetch(
+      `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${TEXT_MODEL}`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ messages }),
+      },
+    );
+    if (!response.ok) {
+      return null;
+    }
+    const body = (await response.json()) as { result?: unknown };
+    return extractAiText(body.result ?? body);
+  } catch {
+    return null;
+  }
+};
+
+const localizeExplanation = async (
+  env: WordHelpEnv,
+  englishExplanation: string,
+  locale: string,
+  context?: string,
+): Promise<{ explanation: string; localized: boolean }> => {
+  if (locale === "en") {
+    return { explanation: englishExplanation, localized: true };
+  }
+
+  const prompt = [
+    `Target language (BCP-47 primary): ${locale}`,
+    "Rewrite the following dictionary explanation into that language.",
+    "Keep it short, plain, and suitable for a reading app tooltip.",
+    "Preserve the meaning and any example sentence.",
+    "",
+    `English explanation: ${englishExplanation}`,
+    context ? `Sentence context: ${context.slice(0, 200)}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  const rewritten = await runTextModel(env, prompt);
+  if (rewritten) {
+    return { explanation: rewritten, localized: true };
+  }
+
+  return { explanation: englishExplanation, localized: false };
 };
 
 const buildResponseBody = (
   payloadWord: string,
   entry: CachedDefinition,
-  context?: string,
-  cached = false,
+  explanation: string,
+  locale: string,
+  options: { cached: boolean; localized: boolean },
 ) => ({
   word: payloadWord,
-  explanation: buildExplanation(payloadWord, entry, context),
+  explanation,
   source: entry.source,
   definition: entry.definition,
   partOfSpeech: entry.partOfSpeech,
-  cached,
+  locale,
+  cached: options.cached,
+  localized: options.localized,
 });
 
-export const handleWordInfo = async (request: Request, env: Env) => {
+export const handleWordInfo = async (request: Request, env: WordHelpEnv) => {
   if (request.method !== "POST") {
     return new Response("Method not allowed", { status: 405 });
   }
@@ -118,27 +199,55 @@ export const handleWordInfo = async (request: Request, env: Env) => {
     });
   }
 
-  const key = `word-info:${normalizeWord(trimmedWord)}`;
+  const locale = primaryLocale(payload.locale);
+  const key = wordInfoCacheKey(locale, trimmedWord);
   const cached = await env.GUTENBERG_KV.get(key);
   if (cached) {
     try {
       const parsed = JSON.parse(cached) as CachedDefinition;
+      const explanation =
+        parsed.explanation ?? buildExplanation(trimmedWord, parsed, payload.context);
       return new Response(
-        JSON.stringify(buildResponseBody(trimmedWord, parsed, payload.context, true)),
+        JSON.stringify(
+          buildResponseBody(trimmedWord, parsed, explanation, locale, {
+            cached: true,
+            localized: parsed.locale ? parsed.locale === locale : locale === "en",
+          }),
+        ),
         { headers: { "Content-Type": "application/json; charset=utf-8" } },
       );
     } catch {
-      // fall through to fetch a fresh definition
+      // fall through
     }
   }
 
   try {
-    const definition = await fetchDefinition(trimmedWord);
-    await env.GUTENBERG_KV.put(key, JSON.stringify(definition), {
+    const definition = await fetchDefinition(normalizeWord(trimmedWord) || trimmedWord);
+    const englishExplanation = buildExplanation(trimmedWord, definition, payload.context);
+    const { explanation, localized } = await localizeExplanation(
+      env,
+      englishExplanation,
+      locale,
+      payload.context,
+    );
+
+    const toStore: CachedDefinition = {
+      ...definition,
+      explanation,
+      locale,
+      updatedAt: Date.now(),
+    };
+    await env.GUTENBERG_KV.put(key, JSON.stringify(toStore), {
       expirationTtl: WORD_INFO_TTL,
     });
+
     return new Response(
-      JSON.stringify(buildResponseBody(trimmedWord, definition, payload.context, false)),
+      JSON.stringify(
+        buildResponseBody(trimmedWord, definition, explanation, locale, {
+          cached: false,
+          localized,
+        }),
+      ),
       { headers: { "Content-Type": "application/json; charset=utf-8" } },
     );
   } catch (error) {

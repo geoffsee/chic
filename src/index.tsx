@@ -2,11 +2,19 @@ import { serve } from "bun";
 import index from "./index.html";
 import { handleBookText } from "../functions/api/book-text";
 import { handleTts } from "../functions/api/tts";
+import { handleWordImage } from "../functions/api/word-image";
+import { handleWordInfo } from "../functions/api/word-info";
 import { ProjectGutenbergBookSource } from "./services/bookService";
 import { createMemoryKv } from "./services/memoryKv";
 
 const gutenbergSource = new ProjectGutenbergBookSource();
 const memoryKv = createMemoryKv();
+
+const wordHelpEnv = () => ({
+  GUTENBERG_KV: memoryKv,
+  CLOUDFLARE_ACCOUNT_ID: process.env.CLOUDFLARE_ACCOUNT_ID,
+  CLOUDFLARE_API_TOKEN: process.env.CLOUDFLARE_API_TOKEN,
+});
 
 const server = serve({
   routes: {
@@ -36,6 +44,16 @@ const server = serve({
     "/api/book-text": {
       async POST(req) {
         return handleBookText(req, { GUTENBERG_KV: memoryKv });
+      },
+    },
+    "/api/word-info": {
+      async POST(req) {
+        return handleWordInfo(req, wordHelpEnv());
+      },
+    },
+    "/api/word-image": {
+      async POST(req) {
+        return handleWordImage(req, wordHelpEnv());
       },
     },
     "/api/tts": {

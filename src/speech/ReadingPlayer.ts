@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import { DEFAULT_CLOUD_SPEAKER, fetchCloudTtsStatus } from "../services/cloudTts";
 import { nextSpeechChunk } from "./chunking";
 import { COPY, engineHelp, engineLabel } from "./copy";
@@ -409,7 +410,7 @@ export class ReadingPlayer {
             this.userEngineChoice = fallback;
             this.setStatus(
               engineHelp(fallback, this.speaker),
-              `Switched to ${engineLabel(fallback).toLowerCase()} after a playback issue.`,
+              t("speech.switchedEngine", { engine: engineLabel(fallback).toLowerCase() }),
             );
             continue;
           }
