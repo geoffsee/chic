@@ -41,10 +41,12 @@ describe("handleBookText chunked API", () => {
 
       expect(response.status).toBe(200);
       expect(response.headers.get("X-Book-Text-Source")).toBe("ingest");
+      expect(response.headers.get("X-Library-Id")).toBe("gutenberg");
       expect(response.headers.get("Content-Type")).toContain("application/json");
 
       const body = (await response.json()) as {
         id: string;
+        libraryId: string;
         page: number;
         text: string;
         nextPage: number | null;
@@ -53,6 +55,7 @@ describe("handleBookText chunked API", () => {
       };
 
       expect(body.id).toBe("999");
+      expect(body.libraryId).toBe("gutenberg");
       expect(body.page).toBe(1);
       expect(body.text.length).toBeGreaterThan(0);
       expect(body.text.length).toBeLessThan(body.totalChars);
@@ -62,7 +65,7 @@ describe("handleBookText chunked API", () => {
       expect(body.text).not.toContain("PROJECT GUTENBERG EBOOK");
       expect(body.text.length).toBeLessThan(SAMPLE_BOOK.length);
 
-      const cached = await kv.get(bookTextCacheKey("999"));
+      const cached = await kv.get(bookTextCacheKey("999", "gutenberg"));
       expect(cached).toBeTruthy();
       expect(cached!.length).toBe(body.totalChars);
     } finally {
@@ -74,7 +77,7 @@ describe("handleBookText chunked API", () => {
     const full =
       "CHAPTER 1\n\n" + "alpha ".repeat(1500) + "\n\nCHAPTER 2\n\n" + "beta ".repeat(1500);
 
-    const kv = createMemoryKv(new Map([[bookTextCacheKey("7"), full]]));
+    const kv = createMemoryKv(new Map([[bookTextCacheKey("7", "gutenberg"), full]]));
     let fetchCount = 0;
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async () => {
@@ -100,8 +103,10 @@ describe("handleBookText chunked API", () => {
         text: string;
         start: number;
         end: number;
+        libraryId: string;
       };
       expect(body.page).toBe(2);
+      expect(body.libraryId).toBe("gutenberg");
       expect(body.start).toBeGreaterThan(0);
       expect(full.slice(body.start, body.end)).toBe(body.text);
     } finally {
@@ -118,6 +123,19 @@ describe("handleBookText chunked API", () => {
       { GUTENBERG_KV: createMemoryKv() },
     );
     expect(response.status).toBe(400);
+  });
+
+  test("rejects unknown library id", async () => {
+    const response = await handleBookText(
+      new Request("https://example.com/api/book-text", {
+        method: "POST",
+        body: JSON.stringify({ id: "1", libraryId: "nope", page: 1 }),
+      }),
+      { GUTENBERG_KV: createMemoryKv() },
+    );
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toContain("Unknown library");
   });
 
   test("returns download error status when Gutenberg fails", async () => {

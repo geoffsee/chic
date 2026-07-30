@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { handleBooks } from "../functions/api/books";
 import { handleGutenbergBooks } from "../functions/api/gutenberg-books";
 
 type Store = Map<string, string>;
@@ -13,7 +14,7 @@ const createMemoryKv = (store: Store = new Map()) => ({
   store,
 });
 
-describe("handleGutenbergBooks pagination", () => {
+describe("handleBooks / Gutenberg catalog", () => {
   test("returns a lean CatalogPage shape from fallback when Gutendex is unreachable", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async () => {
@@ -22,12 +23,12 @@ describe("handleGutenbergBooks pagination", () => {
 
     try {
       const env = { GUTENBERG_KV: createMemoryKv() };
-      const response = await handleGutenbergBooks(
-        new Request("https://example.com/api/gutenberg-books?page=1"),
+      const response = await handleBooks(
+        new Request("https://example.com/api/books?library=gutenberg&page=1"),
         env,
       );
       expect(response.status).toBe(200);
-      expect(response.headers.get("X-Catalog-Source")).toBe("fallback");
+      expect(response.headers.get("X-Library-Id")).toBe("gutenberg");
 
       const body = (await response.json()) as {
         books: Array<Record<string, unknown>>;
@@ -35,10 +36,12 @@ describe("handleGutenbergBooks pagination", () => {
         count: number;
         nextPage: number | null;
         search: string;
+        libraryId: string;
       };
 
       expect(body.page).toBe(1);
       expect(body.search).toBe("");
+      expect(body.libraryId).toBe("gutenberg");
       expect(Array.isArray(body.books)).toBe(true);
       expect(body.books.length).toBeGreaterThan(0);
       expect(typeof body.count).toBe("number");
@@ -46,6 +49,7 @@ describe("handleGutenbergBooks pagination", () => {
       for (const book of body.books) {
         expect(book.metadata).toBeUndefined();
         expect(typeof book.id).toBe("string");
+        expect(book.libraryId).toBe("gutenberg");
         expect(typeof book.title).toBe("string");
         expect(Array.isArray(book.authors)).toBe(true);
       }
@@ -62,8 +66,8 @@ describe("handleGutenbergBooks pagination", () => {
 
     try {
       const env = { GUTENBERG_KV: createMemoryKv() };
-      const response = await handleGutenbergBooks(
-        new Request("https://example.com/api/gutenberg-books?page=1&search=peter"),
+      const response = await handleBooks(
+        new Request("https://example.com/api/books?library=gutenberg&page=1&search=peter"),
         env,
       );
       const body = (await response.json()) as {
@@ -112,12 +116,12 @@ describe("handleGutenbergBooks pagination", () => {
     }) as typeof fetch;
 
     try {
-      const first = await handleGutenbergBooks(
-        new Request("https://example.com/api/gutenberg-books?page=1&search=alice"),
+      const first = await handleBooks(
+        new Request("https://example.com/api/books?library=gutenberg&page=1&search=alice"),
         env,
       );
-      const second = await handleGutenbergBooks(
-        new Request("https://example.com/api/gutenberg-books?page=1&search=alice"),
+      const second = await handleBooks(
+        new Request("https://example.com/api/books?library=gutenberg&page=1&search=alice"),
         env,
       );
 
@@ -127,15 +131,46 @@ describe("handleGutenbergBooks pagination", () => {
       expect(store.size).toBe(1);
 
       const body = (await second.json()) as {
-        books: Array<{ id: string; title: string; metadata?: unknown }>;
+        books: Array<{ id: string; title: string; libraryId: string; metadata?: unknown }>;
         nextPage: number | null;
+        libraryId: string;
       };
+      expect(body.libraryId).toBe("gutenberg");
       expect(body.books[0]?.id).toBe("11");
+      expect(body.books[0]?.libraryId).toBe("gutenberg");
       expect(body.books[0]?.title).toContain("Alice");
       expect(body.books[0]?.metadata).toBeUndefined();
       expect(body.nextPage).toBeNull();
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  test("legacy /api/gutenberg-books still works", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      throw new Error("network down");
+    }) as typeof fetch;
+
+    try {
+      const response = await handleGutenbergBooks(
+        new Request("https://example.com/api/gutenberg-books?page=1"),
+        { GUTENBERG_KV: createMemoryKv() },
+      );
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as { libraryId: string; books: unknown[] };
+      expect(body.libraryId).toBe("gutenberg");
+      expect(body.books.length).toBeGreaterThan(0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("unknown library returns 400", async () => {
+    const response = await handleBooks(
+      new Request("https://example.com/api/books?library=nope"),
+      { GUTENBERG_KV: createMemoryKv() },
+    );
+    expect(response.status).toBe(400);
   });
 });

@@ -1,4 +1,5 @@
 import { handleBookText } from "./functions/api/book-text";
+import { handleBooks, handleLibraries } from "./functions/api/books";
 import { handleGutenbergBooks } from "./functions/api/gutenberg-books";
 import { handleWordImage } from "./functions/api/word-image";
 import { handleWordInfo } from "./functions/api/word-info";
@@ -21,6 +22,14 @@ type Env = TtsEnv &
 export default {
   async fetch(request: Request, env: Env) {
     const url = new URL(request.url);
+
+    if (url.pathname === "/api/libraries") {
+      return handleLibraries(request);
+    }
+
+    if (url.pathname === "/api/books") {
+      return handleBooks(request, env);
+    }
 
     if (url.pathname === "/api/gutenberg-books") {
       return handleGutenbergBooks(request, env);

@@ -1,13 +1,13 @@
 import { serve } from "bun";
 import index from "./index.html";
 import { handleBookText } from "../functions/api/book-text";
+import { handleBooks, handleLibraries } from "../functions/api/books";
+import { handleGutenbergBooks } from "../functions/api/gutenberg-books";
 import { handleTts } from "../functions/api/tts";
 import { handleWordImage } from "../functions/api/word-image";
 import { handleWordInfo } from "../functions/api/word-info";
-import { ProjectGutenbergBookSource } from "./services/bookService";
 import { createMemoryKv } from "./services/memoryKv";
 
-const gutenbergSource = new ProjectGutenbergBookSource();
 const memoryKv = createMemoryKv();
 
 const wordHelpEnv = () => ({
@@ -18,27 +18,20 @@ const wordHelpEnv = () => ({
 
 const server = serve({
   routes: {
+    "/api/libraries": {
+      async GET() {
+        return handleLibraries(new Request("http://localhost/api/libraries"));
+      },
+    },
+    "/api/books": {
+      async GET(req) {
+        return handleBooks(req, { GUTENBERG_KV: memoryKv });
+      },
+    },
+    /** @deprecated Prefer `/api/books?library=gutenberg` */
     "/api/gutenberg-books": {
       async GET(req) {
-        try {
-          const url = new URL(req.url, "http://localhost");
-          const forceReload = url.searchParams.get("force") === "true";
-          const page = Number.parseInt(url.searchParams.get("page") ?? "1", 10);
-          const search = url.searchParams.get("search") ?? "";
-          const catalog = await gutenbergSource.listBooks({
-            forceReload,
-            page: Number.isFinite(page) && page > 0 ? page : 1,
-            search,
-          });
-          return Response.json(catalog);
-        } catch (error) {
-          return Response.json(
-            {
-              error: error instanceof Error ? error.message : "Unable to fetch the catalog.",
-            },
-            { status: 502 },
-          );
-        }
+        return handleGutenbergBooks(req, { GUTENBERG_KV: memoryKv });
       },
     },
     "/api/book-text": {

@@ -22,7 +22,11 @@ import {
 } from "@chakra-ui/react";
 import { useIncrementalBookText } from "./hooks/useIncrementalBookText";
 import { isLocale, useI18n } from "./i18n";
-import { ApiBookSource, BookSummary } from "./services/bookService";
+import {
+  ApiLibrary,
+  bookRefKey,
+  type BookSummary,
+} from "./services/bookService";
 import {
   loadReadingProgress,
   saveBookPosition,
@@ -159,7 +163,7 @@ const buildSentenceContext = (text: string, charIndex: number, radius = 220) => 
 
 export function App() {
   const { t, locale, setLocale, locales } = useI18n();
-  const bookSource = useMemo(() => new ApiBookSource(), []);
+  const library = useMemo(() => new ApiLibrary(), []);
   const [books, setBooks] = useState<BookSummary[]>([]);
   const [selectedBook, setSelectedBook] = useState<BookSummary | null>(null);
   const [loadingBooks, setLoadingBooks] = useState(true);
@@ -173,7 +177,7 @@ export function App() {
     hasMoreText,
     loadMoreText,
     handleReaderScroll,
-  } = useIncrementalBookText({ bookSource, selectedBook });
+  } = useIncrementalBookText({ library, selectedBook });
   const [searchInput, setSearchInput] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   /** Single query object so search resets and page advances never race. */
@@ -249,7 +253,7 @@ export function App() {
       forceCatalogReloadRef.current = false;
     }
 
-    bookSource
+    library
       .listBooks({
         forceReload: shouldForceReload,
         page: pageToLoad,
@@ -278,8 +282,8 @@ export function App() {
         }
 
         setBooks((previous) => {
-          const seen = new Set(previous.map((book) => book.id));
-          const appended = fetchedBooks.filter((book) => !seen.has(book.id));
+          const seen = new Set(previous.map((book) => bookRefKey(book)));
+          const appended = fetchedBooks.filter((book) => !seen.has(bookRefKey(book)));
           return previous.concat(appended);
         });
       })
@@ -309,7 +313,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [bookSource, catalogQuery, t]);
+  }, [library, catalogQuery, t]);
 
   useEffect(() => {
     // Re-read on mount in case another tab wrote progress.
@@ -368,7 +372,7 @@ export function App() {
         return;
       }
 
-      const bookId = selectedBook.id;
+      const progressKey = bookRefKey(selectedBook);
       const currentIndex = Math.max(0, Math.min(wordSegments.length - 1, wordIndex));
       const target = wordSegments[currentIndex];
       if (!target) {
@@ -381,7 +385,7 @@ export function App() {
       }
       pendingWordIndexRef.current = null;
 
-      const { store, persisted } = saveBookPosition(bookId, {
+      const { store, persisted } = saveBookPosition(progressKey, {
         charIndex: target.start,
         wordIndex: currentIndex,
       });
@@ -454,7 +458,9 @@ export function App() {
       return;
     }
 
-    const saved = sessionPositions[selectedBook.id];
+    // Prefer namespaced key; fall back to bare id for pre-library progress entries.
+    const saved =
+      sessionPositions[bookRefKey(selectedBook)] ?? sessionPositions[selectedBook.id];
     const fromChar = typeof saved?.charIndex === "number" ? saved.charIndex : undefined;
     const preferredIndex =
       typeof saved?.wordIndex === "number"
@@ -465,7 +471,7 @@ export function App() {
     const bounded = Math.max(0, Math.min(wordSegments.length - 1, preferredIndex));
 
     setActiveWordIndex((previous) => (previous === bounded ? previous : bounded));
-  }, [selectedBook?.id, sessionPositions, wordSegments]);
+  }, [selectedBook, sessionPositions, wordSegments]);
 
   useEffect(() => {
     if (!infoState.open) {
@@ -1076,7 +1082,7 @@ export function App() {
                 borderColor="accent.border"
                 fontWeight="medium"
               >
-                {bookSource.label}
+                {library.label}
               </Badge>
             </Flex>
 
@@ -1335,11 +1341,13 @@ export function App() {
               onScroll={handleBookListScroll}
             >
               {books.map((book) => {
-                const active = selectedBook?.id === book.id;
+                const ref = bookRefKey(book);
+                const active =
+                  selectedBook != null && bookRefKey(selectedBook) === ref;
                 return (
                   <Box
                     as="li"
-                    key={book.id}
+                    key={ref}
                     role="button"
                     tabIndex={0}
                     onClick={() => handleSelectBook(book)}

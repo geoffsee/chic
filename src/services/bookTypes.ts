@@ -1,48 +1,19 @@
-/** Lean catalog entry returned by the API (no Gutendex metadata blobs). */
-export type BookSummary = {
-  id: string;
-  title: string;
-  authors: string[];
-  sourceLabel: string;
-  description?: string;
-  textUrl?: string;
-};
+/**
+ * @deprecated Import from `./library` or `./bookService` instead.
+ * Kept so existing relative imports keep type-checking during the transition.
+ */
+export type {
+  BookSummary,
+  BookTextPage,
+  BookTextRequest,
+  CatalogPage,
+  FetchBookTextPageOptions,
+  LibraryId,
+  LibraryMeta,
+  ListBooksOptions,
+} from "./library";
 
-export type CatalogPage = {
-  books: BookSummary[];
-  page: number;
-  count: number;
-  nextPage: number | null;
-  search: string;
-};
+export { bookRefKey, Library } from "./library";
 
-export type ListBooksOptions = {
-  forceReload?: boolean;
-  page?: number;
-  search?: string;
-};
-
-/** One page of prepared book text served from KV-backed storage. */
-export type BookTextPage = {
-  id: string;
-  page: number;
-  text: string;
-  nextPage: number | null;
-  totalPages: number;
-  totalChars: number;
-  /** Inclusive start offset of this page in the full prepared text. */
-  start: number;
-  /** Exclusive end offset of this page in the full prepared text. */
-  end: number;
-};
-
-export type FetchBookTextPageOptions = {
-  page?: number;
-};
-
-export interface BookSource {
-  label: string;
-  listBooks(options?: ListBooksOptions): Promise<CatalogPage>;
-  /** Load one page of prepared text (1-based). Does not return the full book. */
-  fetchBookTextPage(book: BookSummary, options?: FetchBookTextPageOptions): Promise<BookTextPage>;
-}
+/** @deprecated Use {@link Library} */
+export type { Library as BookSource } from "./library";

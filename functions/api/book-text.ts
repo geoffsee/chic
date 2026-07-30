@@ -1,10 +1,13 @@
 import {
-  bookTextCacheKey,
   BOOK_TEXT_KV_TTL_SECONDS,
   downloadAndPrepareBookText,
   type BookTextRequest,
 } from "../../src/services/bookTextIngest";
 import { getBookTextPage } from "../../src/services/bookTextChunk";
+import {
+  getSharedLibraryRegistry,
+  type LibraryRegistry,
+} from "../../src/services/library";
 
 type KVNamespace = {
   get(key: string): Promise<string | null>;
@@ -38,24 +41,51 @@ const json = (body: unknown, status = 200, extraHeaders?: Record<string, string>
     },
   });
 
+export type BookTextHandlerOptions = {
+  registry?: LibraryRegistry;
+};
+
 /**
  * Ensure the full prepared book lives in KV, then return one page to the client.
- * First request for a book may download from Gutenberg; later pages are KV-only.
+ * Library plugin owns URL candidates + text preparation.
  */
-export const handleBookText = async (request: Request, env: Env) => {
+export const handleBookText = async (
+  request: Request,
+  env: Env,
+  options: BookTextHandlerOptions = {},
+) => {
+  const registry = options.registry ?? getSharedLibraryRegistry();
   const payload = await request.json().catch(() => null);
   if (!ensureBookPayload(payload)) {
     return json({ error: "Missing or invalid book information." }, 400);
   }
 
+  let library;
+  try {
+    library = registry.require(payload.libraryId);
+  } catch (error) {
+    return json(
+      { error: error instanceof Error ? error.message : "Unknown library." },
+      400,
+    );
+  }
+
   const page = parsePage((payload as { page?: number }).page);
-  const cacheKey = bookTextCacheKey(String(payload.id));
+  const cacheKey = library.textCacheKey(String(payload.id));
 
   let fullText = await env.GUTENBERG_KV.get(cacheKey);
   let fromCache = Boolean(fullText);
 
   if (!fullText) {
-    const downloaded = await downloadAndPrepareBookText(payload);
+    const downloaded = await downloadAndPrepareBookText(
+      {
+        id: String(payload.id),
+        libraryId: library.id,
+        textUrl: payload.textUrl,
+        metadata: payload.metadata,
+      },
+      library,
+    );
     if (!downloaded.ok) {
       if (downloaded.status === 400) {
         return json({ error: "Could not determine a text version for this book." }, 400);
@@ -76,7 +106,12 @@ export const handleBookText = async (request: Request, env: Env) => {
   }
 
   const chunk = getBookTextPage(fullText, String(payload.id), page);
-  return json(chunk, 200, {
-    "X-Book-Text-Source": fromCache ? "kv" : "ingest",
-  });
+  return json(
+    { ...chunk, libraryId: library.id },
+    200,
+    {
+      "X-Book-Text-Source": fromCache ? "kv" : "ingest",
+      "X-Library-Id": library.id,
+    },
+  );
 };

@@ -4,13 +4,13 @@
   <img src="screenshot.png" alt="Chic Reader screenshot" width="800" />
 </p>
 
-Read Project Gutenberg books in the browser with synced text-to-speech, word highlighting, dictionary lookups, and saved reading progress.
+Read public-domain books in the browser with synced text-to-speech, word highlighting, dictionary lookups, and saved reading progress. Project Gutenberg ships as the default pluggable library source.
 
 Live at [chic.geoffsee.com](https://chic.geoffsee.com).
 
 ## Features
 
-- Browse Project Gutenberg books through the app API (paginated, lean catalog payloads)
+- Browse books through a pluggable library API (Project Gutenberg by default; paginated, lean catalog payloads)
 - Infinite-scroll library with title/author search
 - Book text ingested into KV and streamed to the UI one page at a time
 - Read along with word-level highlighting while audio plays
@@ -28,7 +28,7 @@ Live at [chic.geoffsee.com](https://chic.geoffsee.com).
 | UI | React 19, Chakra UI |
 | Local server | Bun (`src/index.tsx`, port 4000) |
 | Production | Cloudflare Workers + static assets |
-| Catalog / text | API-ingested Gutendex catalog + Gutenberg plain text |
+| Catalog / text | Pluggable `Library` sources (default: Gutendex + Gutenberg plain text) |
 | TTS | Workers AI `@cf/deepgram/aura-2-en` |
 | Word help | Free Dictionary API + optional Llama rewrite + FLUX.1 schnell illustration |
 | Cache | Cloudflare KV (`GUTENBERG_KV`) |
@@ -61,8 +61,10 @@ Shared handlers live under `functions/api/` and are wired for both Bun (dev) and
 
 | Route | Method | Purpose |
 | --- | --- | --- |
-| `/api/gutenberg-books` | `GET` | Paginated catalog (`?page=1&search=dickens&force=true`) |
-| `/api/book-text` | `POST` | Ingest book into KV; return one text page (`{ id, textUrl?, page }`) |
+| `/api/libraries` | `GET` | List registered library plugins |
+| `/api/books` | `GET` | Paginated catalog (`?library=gutenberg&page=1&search=dickens&force=true`) |
+| `/api/gutenberg-books` | `GET` | Legacy alias for `/api/books?library=gutenberg` |
+| `/api/book-text` | `POST` | Ingest book into KV; return one text page (`{ id, libraryId?, textUrl?, page }`) |
 | `/api/tts` | `GET` / `POST` | Cloud TTS (Aura-2); requires AI binding in production |
 | `/api/word-info` | `POST` | Dictionary definition (+ optional context, `locale`); AI rewrite when locale ≠ `en` |
 | `/api/word-image` | `POST` | AI illustration for a word (FLUX.1 schnell); cached; fail-open if AI missing |
@@ -94,12 +96,21 @@ Cloud TTS, word-help localization, and word illustrations need the Workers AI bi
 ```
 src/                 React app, speech player, book services/hooks
 src/i18n/            Message catalogs + I18nProvider
-src/services/        Catalog + chunked book-text helpers (ingest, chunk, types)
+src/services/library/  Pluggable Library base class, registry, Gutenberg plugin, API client
+src/services/        Chunked book-text helpers (ingest, chunk) + speech/TTS
 functions/api/       Worker/Bun API handlers (books, text, TTS, word info/image)
 index.ts             Cloudflare Worker entry (routes + assets)
 tests/               Bun test suites for speech, TTS, catalog, chunked text, i18n
 example.wrangler.toml  Deploy config template
 ```
+
+### Adding a book source
+
+1. Subclass `Library` in `src/services/library/` (implement `listBooks`, `fetchBookTextPage`, and for server ingest `resolveTextCandidates` + `prepareText`).
+2. Register it in `createDefaultRegistry()` (or call `getSharedLibraryRegistry().register(...)` at startup).
+3. Browse via `/api/books?library=<your-id>`; book text posts include `libraryId`.
+
+Book ids are namespaced as `libraryId:localId` for reading progress and multi-source maps.
 
 ## Speech architecture
 

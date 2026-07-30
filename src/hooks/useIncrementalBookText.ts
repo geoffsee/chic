@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type UIEvent } from "react";
-import type { BookSource, BookSummary } from "../services/bookService";
+import { bookRefKey, type BookSummary, type Library } from "../services/bookService";
 
 type Options = {
-  bookSource: BookSource;
+  library: Library;
   selectedBook: BookSummary | null;
 };
 
@@ -11,7 +11,7 @@ type Options = {
  * (reader scroll). Full books stay in server KV — the client never requests
  * the entire payload up front.
  */
-export function useIncrementalBookText({ bookSource, selectedBook }: Options) {
+export function useIncrementalBookText({ library, selectedBook }: Options) {
   const [bookText, setBookText] = useState("");
   const [loadingText, setLoadingText] = useState(false);
   const [loadingMoreText, setLoadingMoreText] = useState(false);
@@ -19,10 +19,10 @@ export function useIncrementalBookText({ bookSource, selectedBook }: Options) {
   const [nextTextPage, setNextTextPage] = useState<number | null>(null);
   const [totalTextPages, setTotalTextPages] = useState(0);
   const loadMoreInFlightRef = useRef(false);
-  const selectedIdRef = useRef<string | null>(null);
+  const selectedKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
-    selectedIdRef.current = selectedBook?.id ?? null;
+    selectedKeyRef.current = selectedBook ? bookRefKey(selectedBook) : null;
 
     if (!selectedBook) {
       setBookText("");
@@ -44,10 +44,12 @@ export function useIncrementalBookText({ bookSource, selectedBook }: Options) {
     setTotalTextPages(0);
     loadMoreInFlightRef.current = false;
 
-    bookSource
+    const selectedKey = bookRefKey(selectedBook);
+
+    library
       .fetchBookTextPage(selectedBook, { page: 1 })
       .then((page) => {
-        if (cancelled || selectedIdRef.current !== selectedBook.id) {
+        if (cancelled || selectedKeyRef.current !== selectedKey) {
           return;
         }
         setBookText(page.text);
@@ -55,7 +57,7 @@ export function useIncrementalBookText({ bookSource, selectedBook }: Options) {
         setTotalTextPages(page.totalPages);
       })
       .catch((error) => {
-        if (cancelled || selectedIdRef.current !== selectedBook.id) {
+        if (cancelled || selectedKeyRef.current !== selectedKey) {
           return;
         }
         setTextError(error?.message ?? "Unable to load the book text.");
@@ -71,7 +73,7 @@ export function useIncrementalBookText({ bookSource, selectedBook }: Options) {
     return () => {
       cancelled = true;
     };
-  }, [bookSource, selectedBook]);
+  }, [library, selectedBook]);
 
   const loadMoreText = useCallback(async () => {
     if (!selectedBook || nextTextPage == null) {
@@ -84,19 +86,19 @@ export function useIncrementalBookText({ bookSource, selectedBook }: Options) {
     loadMoreInFlightRef.current = true;
     setLoadingMoreText(true);
     setTextError(null);
-    const bookId = selectedBook.id;
+    const selectedKey = bookRefKey(selectedBook);
     const pageToLoad = nextTextPage;
 
     try {
-      const page = await bookSource.fetchBookTextPage(selectedBook, { page: pageToLoad });
-      if (selectedIdRef.current !== bookId) {
+      const page = await library.fetchBookTextPage(selectedBook, { page: pageToLoad });
+      if (selectedKeyRef.current !== selectedKey) {
         return;
       }
       setBookText((previous) => previous + page.text);
       setNextTextPage(page.nextPage);
       setTotalTextPages(page.totalPages);
     } catch (error) {
-      if (selectedIdRef.current !== bookId) {
+      if (selectedKeyRef.current !== selectedKey) {
         return;
       }
       setTextError(error instanceof Error ? error.message : "Unable to load more of the book.");
@@ -104,7 +106,7 @@ export function useIncrementalBookText({ bookSource, selectedBook }: Options) {
       loadMoreInFlightRef.current = false;
       setLoadingMoreText(false);
     }
-  }, [bookSource, selectedBook, nextTextPage, loadingText, loadingMoreText]);
+  }, [library, selectedBook, nextTextPage, loadingText, loadingMoreText]);
 
   const handleReaderScroll = useCallback(
     (event: UIEvent<HTMLElement>) => {

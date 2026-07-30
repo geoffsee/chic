@@ -1,4 +1,4 @@
-import type { BookTextPage } from "./bookTypes";
+import type { BookTextPage } from "./library";
 
 /** Default characters per page returned to the client. */
 export const DEFAULT_BOOK_TEXT_PAGE_CHARS = 8_000;
@@ -60,6 +60,9 @@ export function buildPageEnds(
   return ends;
 }
 
+/** Page payload before a library stamps its id. */
+export type BookTextPageChunk = Omit<BookTextPage, "libraryId">;
+
 /**
  * Slice one 1-based page from a full prepared book stored in KV.
  */
@@ -68,7 +71,7 @@ export function getBookTextPage(
   bookId: string,
   page: number,
   pageChars: number = DEFAULT_BOOK_TEXT_PAGE_CHARS,
-): BookTextPage {
+): BookTextPageChunk {
   const safePage = Number.isFinite(page) && page >= 1 ? Math.floor(page) : 1;
   const ends = buildPageEnds(fullText, pageChars);
   const totalPages = Math.max(1, ends.length);
