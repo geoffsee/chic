@@ -14,8 +14,11 @@
     "test": "bun test tests",
     "format": "biome format --write .",
     "format:check": "biome format .",
-    "lint": "biome lint .",
-    "check": "biome check ."
+    "lint": "biome check .",
+    "check": "biome check .",
+    "postinstall": "git rev-parse --git-dir >/dev/null 2>&1 && git config core.hooksPath .githooks || true",
+    "typecheck": "tsc --noEmit",
+    "lint:fix": "biome check --write ."
   },
   "dependencies": {
     "@chakra-ui/react": "^3.36.1",
@@ -29,6 +32,7 @@
     "@types/bun": "latest",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "playwright": "^1.58.0"
+    "playwright": "^1.58.0",
+    "typescript": "^5.9.3"
   }
 }
