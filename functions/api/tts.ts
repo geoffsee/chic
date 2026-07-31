@@ -112,7 +112,7 @@ const normalizeAudioResult = async (
   }
 
   if (result instanceof Uint8Array) {
-    return audioResponse(result);
+    return audioResponse(result as unknown as BodyInit);
   }
 
   // Some runtimes wrap binary in { audio: base64 } or similar.
@@ -120,7 +120,7 @@ const normalizeAudioResult = async (
     const record = result as Record<string, unknown>;
     if (typeof record.audio === "string") {
       const binary = Uint8Array.from(atob(record.audio), (c) => c.charCodeAt(0));
-      return audioResponse(binary);
+      return audioResponse(binary as unknown as BodyInit);
     }
   }
 

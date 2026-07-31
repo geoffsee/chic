@@ -1,14 +1,4 @@
 import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ChangeEvent,
-  type KeyboardEvent,
-  type UIEvent,
-} from "react";
-import {
   Badge,
   Box,
   Button,
@@ -20,20 +10,26 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
+import {
+  type ChangeEvent,
+  type KeyboardEvent,
+  type UIEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useIncrementalBookText } from "./hooks/useIncrementalBookText";
 import { isLocale, useI18n } from "./i18n";
-import {
-  ApiLibrary,
-  bookRefKey,
-  type BookSummary,
-} from "./services/bookService";
+import { ApiLibrary, type BookSummary, bookRefKey } from "./services/bookService";
 import {
   loadReadingProgress,
-  saveBookPosition,
   type ReadingPosition,
+  saveBookPosition,
 } from "./services/readingProgress";
-import { phaseLabel, useReadingPlayer } from "./speech";
 import type { HighlightSource } from "./speech";
+import { phaseLabel, useReadingPlayer } from "./speech";
 import "./index.css";
 
 type TextSegment = {
@@ -270,9 +266,7 @@ export function App() {
 
         if (isFirstPage) {
           if (fetchedBooks.length === 0) {
-            setListError(
-              search ? t("library.noMatch", { search }) : t("library.noneAvailable"),
-            );
+            setListError(search ? t("library.noMatch", { search }) : t("library.noneAvailable"));
             setBooks([]);
             return;
           }
@@ -459,8 +453,7 @@ export function App() {
     }
 
     // Prefer namespaced key; fall back to bare id for pre-library progress entries.
-    const saved =
-      sessionPositions[bookRefKey(selectedBook)] ?? sessionPositions[selectedBook.id];
+    const saved = sessionPositions[bookRefKey(selectedBook)] ?? sessionPositions[selectedBook.id];
     const fromChar = typeof saved?.charIndex === "number" ? saved.charIndex : undefined;
     const preferredIndex =
       typeof saved?.wordIndex === "number"
@@ -550,8 +543,7 @@ export function App() {
           return;
         }
         const definition = typeof body?.definition === "string" ? body.definition : undefined;
-        const partOfSpeech =
-          typeof body?.partOfSpeech === "string" ? body.partOfSpeech : undefined;
+        const partOfSpeech = typeof body?.partOfSpeech === "string" ? body.partOfSpeech : undefined;
 
         setInfoState({
           open: true,
@@ -897,31 +889,32 @@ export function App() {
               <Text as="span" opacity={0.85}>
                 {t("controls.speaker")}
               </Text>
-              <Box
-                as="select"
+              <select
                 value={cloudSpeaker}
                 disabled={isSpeaking && !isPaused}
-                onChange={(event: ChangeEvent<HTMLSelectElement>) => {
+                onChange={(event) => {
                   speechControls.setSpeaker(event.target.value);
                 }}
-                appearance="none"
-                borderWidth="1px"
-                borderColor="border.soft"
-                bg="rgba(255, 255, 255, 0.06)"
-                color="ink"
-                borderRadius="pill"
-                px="0.9rem"
-                py="0.4rem"
-                font="inherit"
-                cursor="pointer"
-                _disabled={{ opacity: 0.45, cursor: "not-allowed" }}
+                style={{
+                  appearance: "none",
+                  borderWidth: 1,
+                  borderStyle: "solid",
+                  borderColor: "var(--chakra-colors-border-soft, rgba(255,255,255,0.18))",
+                  background: "rgba(255, 255, 255, 0.06)",
+                  color: "inherit",
+                  borderRadius: 999,
+                  padding: "0.4rem 0.9rem",
+                  font: "inherit",
+                  cursor: isSpeaking && !isPaused ? "not-allowed" : "pointer",
+                  opacity: isSpeaking && !isPaused ? 0.45 : 1,
+                }}
               >
                 {speechControls.featuredSpeakers.map((speaker) => (
                   <option key={speaker.id} value={speaker.id}>
                     {speaker.label}
                   </option>
                 ))}
-              </Box>
+              </select>
             </HStack>
           ) : null}
         </Flex>
@@ -1241,33 +1234,34 @@ export function App() {
               </Heading>
             </Box>
             <HStack gap="0.5rem">
-              <Box
-                as="select"
+              <select
                 aria-label={t("locale.aria")}
                 value={locale}
-                onChange={(event: ChangeEvent<HTMLSelectElement>) => {
+                onChange={(event) => {
                   if (isLocale(event.target.value)) {
                     setLocale(event.target.value);
                   }
                 }}
-                appearance="none"
-                borderWidth="1px"
-                borderColor="border.strong"
-                bg="rgba(255, 255, 255, 0.06)"
-                color="ink"
-                borderRadius="control"
-                px="0.65rem"
-                py="0.35rem"
-                font="inherit"
-                fontSize="0.8rem"
-                cursor="pointer"
+                style={{
+                  appearance: "none",
+                  borderWidth: 1,
+                  borderStyle: "solid",
+                  borderColor: "var(--chakra-colors-border-strong, rgba(255,255,255,0.28))",
+                  background: "rgba(255, 255, 255, 0.06)",
+                  color: "inherit",
+                  borderRadius: 10,
+                  padding: "0.35rem 0.65rem",
+                  font: "inherit",
+                  fontSize: "0.8rem",
+                  cursor: "pointer",
+                }}
               >
                 {locales.map((entry) => (
                   <option key={entry.id} value={entry.id}>
                     {entry.name}
                   </option>
                 ))}
-              </Box>
+              </select>
               <Button
                 type="button"
                 size="sm"
@@ -1311,9 +1305,7 @@ export function App() {
                 {t(catalogCount === 1 ? "library.bookCount" : "library.bookCountPlural", {
                   count: catalogCount.toLocaleString(),
                 })}
-                {catalogQuery.search
-                  ? t("library.matching", { search: catalogQuery.search })
-                  : ""}
+                {catalogQuery.search ? t("library.matching", { search: catalogQuery.search }) : ""}
               </Text>
             ) : null}
           </Box>
@@ -1342,8 +1334,7 @@ export function App() {
             >
               {books.map((book) => {
                 const ref = bookRefKey(book);
-                const active =
-                  selectedBook != null && bookRefKey(selectedBook) === ref;
+                const active = selectedBook != null && bookRefKey(selectedBook) === ref;
                 return (
                   <Box
                     as="li"
@@ -1475,18 +1466,21 @@ export function App() {
             ) : null}
             {infoState.image ? (
               <Box
-                as="img"
-                src={infoState.image}
-                alt={t("wordHelp.imageAlt", { word: infoState.word })}
                 mt="0.55rem"
                 maxW="100%"
                 w="100%"
                 maxH="180px"
-                objectFit="cover"
                 borderRadius="12px"
+                overflow="hidden"
                 borderWidth="1px"
                 borderColor="border.subtle"
-              />
+              >
+                <img
+                  src={infoState.image}
+                  alt={t("wordHelp.imageAlt", { word: infoState.word })}
+                  style={{ width: "100%", maxHeight: 180, objectFit: "cover", display: "block" }}
+                />
+              </Box>
             ) : null}
           </Box>
           <Button
